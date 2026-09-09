@@ -86,6 +86,30 @@ if (!isValidTestReceipt(receipt)) throw new Error("bad receipt");
 (Prefer the provider seam above — `getProvider().createSession(...)` —
 direct `checkout-test.ts` calls remain the fixture engine underneath.)
 
+## Webhook dispatch skeleton
+
+Verified events still need an answer to "what now?" — that's
+`lib/webhook-handler.ts`. It dispatches verified events to pure effect
+records both products consume through one call, so neither product
+reinvents its webhook route:
+
+```js
+const effect = handleTestWebhookDelivery(rawBody, signature);
+// effect.effect:
+//   "unlock_deliverable"         checkout.session.completed  → divorce packet
+//   "record_payment"             payment_intent.succeeded    → ledger entry
+//   "provision_subscription"     customer.subscription.created → wax alerts on
+//   "sync_subscription"          customer.subscription.updated → wax plan sync
+//   "grant_access_to_period_end" customer.subscription.canceled → wax offboarding
+//      (effect.accessUntil = ISO timestamp access runs to)
+```
+
+Verification happens *inside* the call — bad signatures, stale events,
+and replays throw before any handler runs. Unlock never fires on a
+session fixture (only a validated receipt), unknown event types throw
+`UNKNOWN_EVENT_TYPE`, and each event id produces exactly one effect
+(`ALREADY_HANDLED` on redispatch).
+
 ## How wax consumes it
 
 `lib/subscription-plans.ts` is the recurring-plan model behind the seam:

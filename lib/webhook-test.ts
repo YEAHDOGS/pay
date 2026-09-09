@@ -71,7 +71,9 @@ export const WEBHOOK_ERROR_CODES = Object.freeze({
 export type WebhookEventType =
   | "checkout.session.completed"
   | "payment_intent.succeeded"
-  | "customer.subscription.created";
+  | "customer.subscription.created"
+  | "customer.subscription.updated"
+  | "customer.subscription.canceled";
 
 export interface TestWebhookEvent {
   readonly id: string;
