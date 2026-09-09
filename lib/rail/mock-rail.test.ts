@@ -142,3 +142,52 @@ test("full lifecycle: create → pay → balance and event consistency", async (
   assert.equal(balance.total, 40_000);
   assert.equal(paidTotal, 60_000);
 });
+
+test("verifyLedger passes after mixed operations and journal has one entry per payment", async () => {
+  const r = new MockRail({ startingBalance: 100_000 });
+  const a = await r.createInvoice(10_000);
+  const b = await r.createInvoice(20_000);
+  const c = await r.createInvoice(30_000);
+
+  await r.payInvoice(a.id, { idempotencyKey: "key-a" });
+  // lost response: the payer retries with the same key
+  await r.payInvoice(a.id, { idempotencyKey: "key-a" });
+  await r.payInvoice(b.id);
+  await r.cancelInvoice(c.id);
+
+  assert.doesNotThrow(() => r.verifyLedger(), "ledger must be consistent");
+  const ledger = r.getLedger();
+  assert.equal(ledger.length, 2, "retry is not journaled twice");
+  assert.deepEqual(
+    ledger.map((e) => e.amount).sort((x, y) => x - y),
+    [10_000, 20_000],
+  );
+  assert.equal(ledger[0].idempotencyKey, "key-a");
+  assert.equal((await r.getBalance()).available, 70_000);
+});
+
+test("getLedger returns a copy the caller cannot mutate", async () => {
+  const r = new MockRail({ startingBalance: 10_000 });
+  const inv = await r.createInvoice(1000);
+  await r.payInvoice(inv.id);
+  const ledger = r.getLedger();
+  assert.equal(ledger.length, 1);
+  (ledger as unknown[]).push({ bogus: true });
+  assert.equal(r.getLedger().length, 1, "internal journal untouched");
+  assert.doesNotThrow(() => r.verifyLedger());
+});
+
+test("verifyLedger detects a corrupted journal", async () => {
+  const r = new MockRail({ startingBalance: 10_000 });
+  const inv = await r.createInvoice(1000);
+  await r.payInvoice(inv.id);
+  // white-box fault injection: an entry for a payment that never happened
+  (r as unknown as { journal: unknown[] }).journal.push({
+    invoiceId: "ghost",
+    amount: 999_999,
+    unit: "sats",
+    settledAt: Date.now(),
+    proof: "forged",
+  });
+  assert.throws(() => r.verifyLedger(), /ledger corrupt/);
+});

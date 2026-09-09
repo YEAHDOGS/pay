@@ -36,6 +36,21 @@ function nextId(): string {
   return `mock-inv-${Date.now().toString(36)}-${invoiceCounter}`;
 }
 
+/**
+ * One settled payment, appended exactly once per payment — never on an
+ * idempotent replay. The journal is the rail's source of truth for "what
+ * money moved"; `verifyLedger()` checks it against the balance.
+ */
+export interface LedgerEntry {
+  readonly invoiceId: string;
+  /** Integer minor units. */
+  readonly amount: number;
+  readonly unit: string;
+  readonly settledAt: number;
+  readonly proof: string;
+  readonly idempotencyKey?: string;
+}
+
 export interface MockRailOptions {
   /** Starting balance in minor units. Defaults to 100_000. */
   startingBalance?: number;
@@ -51,6 +66,7 @@ export class MockRail implements RailAdapter {
   readonly unit: string;
 
   private balance: number;
+  private readonly startingBalance: number;
   private readonly invoices = new Map<string, Invoice>();
   private readonly listeners = new Map<RailEvent, Set<(r: PaymentResult) => void>>();
   private readonly invoiceTtlMs: number;
@@ -61,11 +77,14 @@ export class MockRail implements RailAdapter {
    */
   private readonly idempotency = new Map<string, PaymentResult>();
   private readonly idempotencyInvoice = new Map<string, string>();
+  /** Append-only settlement journal. One entry per payment, never per replay. */
+  private readonly journal: LedgerEntry[] = [];
 
   constructor(options: MockRailOptions = {}) {
     const startingBalance = options.startingBalance ?? 100_000;
     assertAmount(startingBalance);
     this.balance = startingBalance;
+    this.startingBalance = startingBalance;
     this.unit = options.unit ?? "sats";
     this.invoiceTtlMs = options.invoiceTtlMs ?? 15 * 60 * 1000;
   }
@@ -173,12 +192,69 @@ export class MockRail implements RailAdapter {
       this.idempotency.set(idempotencyKey, result);
       this.idempotencyInvoice.set(idempotencyKey, invoiceId);
     }
+    this.journal.push({
+      invoiceId: current.id,
+      amount: current.amount,
+      unit: this.unit,
+      settledAt: result.settledAt,
+      proof: result.proof,
+      idempotencyKey,
+    });
     this.emit("invoice-paid", result);
     return result;
   }
 
   async getBalance(): Promise<Balance> {
     return { total: this.balance, available: this.balance, unit: this.unit };
+  }
+
+  /**
+   * The append-only settlement journal: one entry per payment, in
+   * settlement order. Returned as a copy — the rail's history is not
+   * writable from outside.
+   */
+  getLedger(): readonly LedgerEntry[] {
+    return [...this.journal];
+  }
+
+  /**
+   * Ledger consistency check. Throws on the first violated invariant:
+   *   1. every journal amount is a positive integer of minor units
+   *   2. no invoice appears twice (one settlement per invoice, ever)
+   *   3. sum(journal amounts) + balance === startingBalance (no money
+   *      created or destroyed outside a recorded payment)
+   *   4. every journaled invoice exists and is in "paid" status
+   *
+   * Run this after any batch of payments — a green check means the
+   * balance is fully explained by recorded settlements.
+   */
+  verifyLedger(): void {
+    const seen = new Set<string>();
+    let settled = 0;
+    for (const entry of this.journal) {
+      if (!Number.isInteger(entry.amount) || entry.amount <= 0) {
+        throw new Error(`ledger corrupt: invalid amount on ${entry.invoiceId}`);
+      }
+      if (seen.has(entry.invoiceId)) {
+        throw new Error(`ledger corrupt: duplicate settlement of ${entry.invoiceId}`);
+      }
+      seen.add(entry.invoiceId);
+      const invoice = this.invoices.get(entry.invoiceId);
+      if (!invoice) {
+        throw new Error(`ledger corrupt: settlement for unknown invoice ${entry.invoiceId}`);
+      }
+      if (this.live(invoice).status !== "paid") {
+        throw new Error(
+          `ledger corrupt: journaled invoice ${entry.invoiceId} is not paid`,
+        );
+      }
+      settled += entry.amount;
+    }
+    if (settled + this.balance !== this.startingBalance) {
+      throw new Error(
+        `ledger corrupt: settled ${settled} + balance ${this.balance} != starting ${this.startingBalance}`,
+      );
+    }
   }
 
   on(event: RailEvent, listener: (result: PaymentResult) => void): Unsubscribe {
