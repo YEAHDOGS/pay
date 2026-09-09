@@ -17,7 +17,13 @@
  *   const effect = handleServerWebhookDelivery(        // verify → parse → dispatch
  *     rawBody,
  *     request.headers.get("stripe-signature"),
- *     process.env.STRIPE_WEBHOOK_SECRET
+ *     process.env.STRIPE_WEBHOOK_SECRET,
+ *     {
+ *       // Fail closed on amount tamper: the server's own catalog price,
+ *       // never anything the webhook claimed.
+ *       expectedAmountTotal: 3000,                    // 3000¢ — the $30 packet
+ *       expectedCurrency: "usd",
+ *     }
  *   );
  *   if (effect.effect === "record_payment") {
  *     // fulfill: write effect.payment to divorce's order ledger,
@@ -34,6 +40,11 @@
  *     signature is good, so attacker-controlled bytes can't shape an
  *     event. Non-JSON, non-object, or id/type-less events throw
  *     BAD_EVENT.
+ *   - Amount expectation: when the route supplies its own
+ *     `expectedAmountTotal`/`expectedCurrency`, a verified event whose
+ *     amount or currency differs throws AMOUNT_MISMATCH instead of
+ *     producing a record_payment — the packet never unlocks on a
+ *     tampered or mis-priced event.
  *   - Event idempotency: each verified event id produces exactly one
  *     effect. A retried delivery (Stripe retries on any non-2xx)
  *     throws ALREADY_HANDLED instead of double-recording. The ledger
@@ -67,6 +78,8 @@ export const SERVER_DISPATCH_ERROR_CODES = Object.freeze({
   INVALID_OBJECT: "INVALID_OBJECT",
   /** Event id already dispatched. */
   ALREADY_HANDLED: "ALREADY_HANDLED",
+  /** Verified event amount/currency didn't match the server's expectation. */
+  AMOUNT_MISMATCH: "AMOUNT_MISMATCH",
 });
 
 /* ── Types ───────────────────────────────────────────────────────── */
@@ -80,6 +93,28 @@ export interface ServerWebhookEvent {
   readonly id: string;
   readonly type: string;
   readonly data: { readonly object: unknown };
+}
+
+/**
+ * Dispatch options: verification options from webhook-server plus the
+ * server's own amount expectations. The expectations come from the
+ * route's catalog (e.g. divorce's 3000¢ uncontested_packet price),
+ * never from the webhook payload — they close the hole where a
+ * verified event carries an unexpected amount.
+ */
+export interface ServerWebhookDispatchOptions extends VerifyWebhookOptions {
+  /**
+   * Integer minor units the server charged (e.g. 3000 for the $30
+   * packet). When supplied, a verified event whose amount_total
+   * differs throws AMOUNT_MISMATCH.
+   */
+  expectedAmountTotal?: number;
+  /**
+   * Expected currency code, case-insensitive (e.g. "usd"). When
+   * supplied, a verified event whose currency differs throws
+   * AMOUNT_MISMATCH.
+   */
+  expectedCurrency?: string;
 }
 
 /**
@@ -189,6 +224,60 @@ function isCheckoutSessionObject(
   );
 }
 
+/* ── Server-side amount expectation ────────────────────────────────── */
+
+/**
+ * Compare the verified session object against the server's own
+ * catalog expectations. Both must match exactly: an amount difference
+ * (under OR over) or a currency swap throws AMOUNT_MISMATCH.
+ *
+ * The expectation is validated first — a malformed expectation can't
+ * verify anything, so it throws too (fail closed).
+ *
+ * @throws AMOUNT_MISMATCH
+ */
+export function assertServerWebhookAmountMatches(
+  obj: CheckoutSessionObject,
+  opts: ServerWebhookDispatchOptions
+): void {
+  const { expectedAmountTotal, expectedCurrency } = opts;
+  if (expectedAmountTotal === undefined && expectedCurrency === undefined) {
+    return; // route didn't opt in — shape validation already ran
+  }
+  if (
+    expectedAmountTotal !== undefined &&
+    (!Number.isInteger(expectedAmountTotal) || expectedAmountTotal <= 0)
+  ) {
+    throw dispatchErr(
+      SERVER_DISPATCH_ERROR_CODES.AMOUNT_MISMATCH,
+      "malformed server amount expectation — refusing to verify " +
+        "against a bad expectation."
+    );
+  }
+  if (
+    expectedAmountTotal !== undefined &&
+    obj.amount_total !== expectedAmountTotal
+  ) {
+    throw dispatchErr(
+      SERVER_DISPATCH_ERROR_CODES.AMOUNT_MISMATCH,
+      `verified webhook reported amount_total ${obj.amount_total} but the ` +
+        `server expected ${expectedAmountTotal} — refusing to record.`
+    );
+  }
+  if (
+    expectedCurrency !== undefined &&
+    typeof expectedCurrency === "string" &&
+    expectedCurrency.length > 0 &&
+    obj.currency.toLowerCase() !== expectedCurrency.toLowerCase()
+  ) {
+    throw dispatchErr(
+      SERVER_DISPATCH_ERROR_CODES.AMOUNT_MISMATCH,
+      `verified webhook reported currency "${obj.currency}" but the ` +
+        `server expected "${expectedCurrency}" — refusing to record.`
+    );
+  }
+}
+
 /* ── Event-id idempotency ledger ─────────────────────────────────── */
 
 /**
@@ -208,11 +297,12 @@ const handledEventIds = new Set<string>();
  * dispatch in one call). Handling an unverified event is a server-side
  * violation — the caller must have verified first.
  *
- * @throws ALREADY_HANDLED | UNKNOWN_EVENT_TYPE | INVALID_OBJECT
+ * @throws AMOUNT_MISMATCH | ALREADY_HANDLED | UNKNOWN_EVENT_TYPE |
+ *         INVALID_OBJECT
  */
 export function handleServerWebhookEvent(
   event: ServerWebhookEvent,
-  opts: { nowSeconds?: number } = {}
+  opts: ServerWebhookDispatchOptions = {}
 ): ServerWebhookEffect {
   if (!event || typeof event !== "object" || typeof event.id !== "string") {
     throw dispatchErr(
@@ -239,6 +329,9 @@ export function handleServerWebhookEvent(
             "never recording a payment off a malformed payload."
         );
       }
+      // Amount/currency expectation: checked BEFORE the ledger marks,
+      // so a mismatch never records and the event stays retryable.
+      assertServerWebhookAmountMatches(obj, opts);
       const now = opts.nowSeconds ?? Math.floor(Date.now() / 1000);
       const effect: ServerWebhookEffect = {
         effect: "record_payment",
@@ -282,14 +375,14 @@ export function handleServerWebhookEvent(
  *
  * @throws MISSING_SECRET | FIXTURE_SECRET | BAD_HEADER |
  *         BAD_SIGNATURE | EXPIRED_EVENT | FUTURE_EVENT |
- *         BAD_EVENT | ALREADY_HANDLED | UNKNOWN_EVENT_TYPE |
- *         INVALID_OBJECT
+ *         BAD_EVENT | AMOUNT_MISMATCH | ALREADY_HANDLED |
+ *         UNKNOWN_EVENT_TYPE | INVALID_OBJECT
  */
 export function handleServerWebhookDelivery(
   rawBody: string,
   header: unknown,
   secret: unknown,
-  opts: VerifyWebhookOptions = {}
+  opts: ServerWebhookDispatchOptions = {}
 ): ServerWebhookEffect {
   const event = parseServerWebhookEvent(rawBody, header, secret, opts);
   return handleServerWebhookEvent(event, opts);
