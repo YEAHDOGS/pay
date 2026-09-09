@@ -72,6 +72,45 @@ test("payInvoice rejects unknown and cancelled invoices", async () => {
   await assert.rejects(() => r.cancelInvoice(inv.id), /cancelled/);
 });
 
+test("payInvoice is idempotent under the same idempotency key", async () => {
+  const r = new MockRail({ startingBalance: 10_000 });
+  let events = 0;
+  r.on("invoice-paid", () => events++);
+
+  const inv = await r.createInvoice(2500);
+  const first = await r.payInvoice(inv.id, { idempotencyKey: "key-1" });
+  const retry = await r.payInvoice(inv.id, { idempotencyKey: "key-1" });
+
+  assert.equal(retry, first, "retry returns the original result object");
+  assert.equal((await r.getBalance()).available, 7500, "debited exactly once");
+  assert.equal(events, 1, "event emitted exactly once");
+});
+
+test("payInvoice rejects an idempotency key reused for a different invoice", async () => {
+  const r = new MockRail({ startingBalance: 10_000 });
+  const a = await r.createInvoice(1000);
+  const b = await r.createInvoice(1000);
+  await r.payInvoice(a.id, { idempotencyKey: "shared-key" });
+  await assert.rejects(
+    () => r.payInvoice(b.id, { idempotencyKey: "shared-key" }),
+    /idempotency key reused/,
+  );
+  // b is untouched and still payable with its own key
+  assert.equal((await r.getInvoice(b.id))!.status, "pending");
+  await r.payInvoice(b.id, { idempotencyKey: "other-key" });
+  assert.equal((await r.getBalance()).available, 8000);
+});
+
+test("payInvoice still rejects double payment when keys differ", async () => {
+  const r = new MockRail({ startingBalance: 10_000 });
+  const inv = await r.createInvoice(1000);
+  await r.payInvoice(inv.id, { idempotencyKey: "k-a" });
+  await assert.rejects(
+    () => r.payInvoice(inv.id, { idempotencyKey: "k-b" }),
+    /already paid/,
+  );
+  assert.equal((await r.getBalance()).available, 9000);
+});
 test("expired invoices cannot be paid", async () => {
   const r = rail({ invoiceTtlMs: 1 });
   const inv = await r.createInvoice(100);
