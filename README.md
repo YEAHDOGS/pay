@@ -71,6 +71,11 @@ pay/
 │   ├── webhook-handler.ts      # Dispatch skeleton: verified event → product effect
 │   ├── staging-drill.ts        # End-to-end staging drills: the full loop for both money milestones
 │   └── subscription-plans.ts   # Plan model: wax $10/mo lifecycle
+├── lib/rail/                   # Settlement rail (value movement, pre-live)
+│   ├── rail-adapter.ts         # RailAdapter interface (pluggable settlement contract)
+│   ├── mock-rail.ts            # MockRail: in-memory adapter + idempotency keys + ledger journal
+│   ├── payment-guard.ts        # assertPaymentMatches: amount-tamper rejection before unlocking
+│   └── e2e-checkout.test.ts    # End-to-end: divorce $30 staging checkout on the rail
 ├── README.md
 ├── LICENSE                     # MIT
 └── .gitignore
