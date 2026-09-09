@@ -45,10 +45,20 @@
  *     amount or currency differs throws AMOUNT_MISMATCH instead of
  *     producing a record_payment — the packet never unlocks on a
  *     tampered or mis-priced event.
- *   - Event idempotency: each verified event id produces exactly one
- *     effect. A retried delivery (Stripe retries on any non-2xx)
- *     throws ALREADY_HANDLED instead of double-recording. The ledger
- *     marks an id only AFTER its handler succeeds.
+ *   - Event idempotency with TTL: each verified event id produces
+ *     exactly one effect per retention window (7 days). A retried
+ *     delivery (Stripe retries on any non-2xx) throws ALREADY_HANDLED
+ *     instead of double-recording; `handleServerWebhookDeliveryOnce`
+ *     answers with a clear `{ status: "already_processed" }` response
+ *     instead of throwing. A duplicate whose body DIFFERS from the
+ *     handled delivery throws EVENT_BODY_CONFLICT — a retry must be
+ *     byte-identical. The ledger marks an id only AFTER its handler
+ *     succeeds, and lazily prunes ids older than the retention window
+ *     so it stays bounded.
+ *   - Replay protection: stale events (older than the 300s tolerance)
+ *     throw EXPIRED_EVENT at verification, before any ledger lookup
+ *     or handler runs — an ancient replay can never double-record or
+ *     even reach dispatch.
  *   - `checkout.session.completed` → `record_payment`: the handler
  *     validates the session object shape (string id, numeric
  *     amount_total, currency, payment_status) and emits a PURE
@@ -65,6 +75,7 @@ import {
   type VerifyWebhookOptions,
   verifyServerWebhookSignature,
 } from "./webhook-server";
+import { createHash } from "node:crypto";
 
 /* ── Hoisted constants ───────────────────────────────────────────── */
 
@@ -78,6 +89,9 @@ export const SERVER_DISPATCH_ERROR_CODES = Object.freeze({
   INVALID_OBJECT: "INVALID_OBJECT",
   /** Event id already dispatched. */
   ALREADY_HANDLED: "ALREADY_HANDLED",
+  /** Same event id delivered again with a DIFFERENT body — not a
+   *  retry, something is wrong; fail closed instead of deduping. */
+  EVENT_BODY_CONFLICT: "EVENT_BODY_CONFLICT",
   /** Verified event amount/currency didn't match the server's expectation. */
   AMOUNT_MISMATCH: "AMOUNT_MISMATCH",
 });
@@ -278,14 +292,40 @@ export function assertServerWebhookAmountMatches(
   }
 }
 
-/* ── Event-id idempotency ledger ─────────────────────────────────── */
+/* ── Event-id idempotency ledger with TTL ──────────────────────── */
 
 /**
- * Event ids already dispatched to an effect. Marking happens only
- * after a handler succeeds, so a handler crash leaves the event
- * retryable. In-memory per process — the route owns durable storage.
+ * How long a processed event id stays in the ledger, seconds.
+ * Past this window the id is forgotten — a delivery that old would
+ * fail the signature-freshness check anyway, so the window is
+ * defense in depth against both unbounded memory growth and
+ * ancient-id collisions.
  */
-const handledEventIds = new Set<string>();
+export const SERVER_DISPATCH_ID_RETENTION_SECONDS = 604800 as const; // 7 days
+
+/** Event id → when its effect was produced + the delivery's body hash. */
+interface HandledEventEntry {
+  readonly processedAt: number;
+  readonly bodyHash: string;
+}
+
+const handledEvents = new Map<string, HandledEventEntry>();
+
+/** SHA-256 hex of a raw delivery body — identifies the exact payload. */
+function bodyHashOf(rawBody: string): string {
+  return createHash("sha256").update(rawBody, "utf8").digest("hex");
+}
+
+/**
+ * Lazily drop processed ids older than the retention window, keeping
+ * the ledger bounded. Runs at dispatch time, before the lookup.
+ */
+function pruneHandledEvents(now: number): void {
+  const cutoff = now - SERVER_DISPATCH_ID_RETENTION_SECONDS;
+  for (const [id, entry] of handledEvents) {
+    if (entry.processedAt <= cutoff) handledEvents.delete(id);
+  }
+}
 
 /* ── Dispatch ────────────────────────────────────────────────────── */
 
@@ -293,16 +333,23 @@ const handledEventIds = new Set<string>();
  * Dispatch a VERIFIED server webhook event to its effect.
  *
  * NOTE: pass only events returned by `parseServerWebhookEvent` (or
- * use `handleServerWebhookDelivery`, which does verify + parse +
- * dispatch in one call). Handling an unverified event is a server-side
- * violation — the caller must have verified first.
+ * use `handleServerWebhookDelivery` / `handleServerWebhookDeliveryOnce`,
+ * which do verify + parse + dispatch in one call). Handling an
+ * unverified event is a server-side violation — the caller must have
+ * verified first.
  *
- * @throws AMOUNT_MISMATCH | ALREADY_HANDLED | UNKNOWN_EVENT_TYPE |
- *         INVALID_OBJECT
+ * When dispatching through the delivery wrappers, pass `bodyHash` (the
+ * SHA-256 of the raw delivery body): a redelivery of the same event id
+ * with a DIFFERENT body then throws EVENT_BODY_CONFLICT instead of
+ * being quietly deduplicated — a retry must be byte-identical.
+ *
+ * @throws AMOUNT_MISMATCH | ALREADY_HANDLED | EVENT_BODY_CONFLICT |
+ *         UNKNOWN_EVENT_TYPE | INVALID_OBJECT
  */
 export function handleServerWebhookEvent(
   event: ServerWebhookEvent,
-  opts: ServerWebhookDispatchOptions = {}
+  opts: ServerWebhookDispatchOptions = {},
+  bodyHash?: string
 ): ServerWebhookEffect {
   if (!event || typeof event !== "object" || typeof event.id !== "string") {
     throw dispatchErr(
@@ -310,9 +357,26 @@ export function handleServerWebhookEvent(
       "refusing to dispatch an unverified event — parse it via parseServerWebhookEvent first."
     );
   }
+  const now = opts.nowSeconds ?? Math.floor(Date.now() / 1000);
+  // TTL prune before the lookup: an id forgotten this call behaves
+  // as never-seen, matching the retention-window guarantee.
+  pruneHandledEvents(now);
   // Idempotency check before any handler runs: a retried delivery
-  // must never double-apply.
-  if (handledEventIds.has(event.id)) {
+  // must never double-apply. Same id + different body is NOT a
+  // retry — it fails closed.
+  const prior = handledEvents.get(event.id);
+  if (prior !== undefined) {
+    if (
+      bodyHash !== undefined &&
+      bodyHash.length > 0 &&
+      prior.bodyHash !== bodyHash
+    ) {
+      throw dispatchErr(
+        SERVER_DISPATCH_ERROR_CODES.EVENT_BODY_CONFLICT,
+        `event ${event.id} was already handled with a different body — ` +
+          "refusing to treat this as a retry."
+      );
+    }
     throw dispatchErr(
       SERVER_DISPATCH_ERROR_CODES.ALREADY_HANDLED,
       `event ${event.id} already produced an effect — refusing redispatch.`
@@ -332,7 +396,6 @@ export function handleServerWebhookEvent(
       // Amount/currency expectation: checked BEFORE the ledger marks,
       // so a mismatch never records and the event stays retryable.
       assertServerWebhookAmountMatches(obj, opts);
-      const now = opts.nowSeconds ?? Math.floor(Date.now() / 1000);
       const effect: ServerWebhookEffect = {
         effect: "record_payment",
         eventId: event.id,
@@ -349,7 +412,7 @@ export function handleServerWebhookEvent(
         liveMode: true,
       };
       // Ledger marks only after the effect was built successfully.
-      handledEventIds.add(event.id);
+      handledEvents.set(event.id, { processedAt: now, bodyHash: bodyHash ?? "" });
       return effect;
     }
     default: {
@@ -376,7 +439,7 @@ export function handleServerWebhookEvent(
  * @throws MISSING_SECRET | FIXTURE_SECRET | BAD_HEADER |
  *         BAD_SIGNATURE | EXPIRED_EVENT | FUTURE_EVENT |
  *         BAD_EVENT | AMOUNT_MISMATCH | ALREADY_HANDLED |
- *         UNKNOWN_EVENT_TYPE | INVALID_OBJECT
+ *         EVENT_BODY_CONFLICT | UNKNOWN_EVENT_TYPE | INVALID_OBJECT
  */
 export function handleServerWebhookDelivery(
   rawBody: string,
@@ -385,14 +448,80 @@ export function handleServerWebhookDelivery(
   opts: ServerWebhookDispatchOptions = {}
 ): ServerWebhookEffect {
   const event = parseServerWebhookEvent(rawBody, header, secret, opts);
-  return handleServerWebhookEvent(event, opts);
+  return handleServerWebhookEvent(event, opts, bodyHashOf(rawBody));
 }
 
 /**
  * Reset the dispatch ledger. For tests only.
  */
 export function resetServerWebhookDispatch(): void {
-  handledEventIds.clear();
+  handledEvents.clear();
+}
+
+/* ── Idempotent delivery: a clear answer instead of a throw ─────── */
+
+/**
+ * The idempotent answer a server route wants for its 2xx decision:
+ * first delivery → `processed` with the effect to fulfill;
+ * redelivery of the same event id → `already_processed` naming the
+ * exact event, with NO second payment recorded.
+ */
+export type ServerWebhookDeliveryResult =
+  | { readonly status: "processed"; readonly effect: ServerWebhookEffect }
+  | { readonly status: "already_processed"; readonly eventId: string };
+
+function isAlreadyHandled(e: unknown): boolean {
+  return (
+    e instanceof Error &&
+    (e as Error & { code?: string }).code ===
+      SERVER_DISPATCH_ERROR_CODES.ALREADY_HANDLED
+  );
+}
+
+/**
+ * Verify, parse, then dispatch — returning a clear idempotent result
+ * instead of throwing on duplicate delivery.
+ *
+ *   const result = handleServerWebhookDeliveryOnce(rawBody, header, secret);
+ *   if (result.status === "processed") {
+ *     // fulfill result.effect.payment exactly once
+ *   }
+ *   return ok(); // 2xx either way — the duplicate is already recorded
+ *
+ * A duplicate still has to pass verification (signature + freshness)
+ * before the ledger is consulted, so `already_processed` is never
+ * returned for a forged or stale replay: those keep throwing
+ * (BAD_SIGNATURE / EXPIRED_EVENT) exactly as before. A duplicate whose
+ * body DIFFERS from the handled delivery throws EVENT_BODY_CONFLICT —
+ * a retry must be byte-identical. Unknown types, malformed objects,
+ * and amount mismatches also still throw — only ALREADY_HANDLED
+ * converts to the `already_processed` answer.
+ *
+ * @throws MISSING_SECRET | FIXTURE_SECRET | BAD_HEADER |
+ *         BAD_SIGNATURE | EXPIRED_EVENT | FUTURE_EVENT |
+ *         BAD_EVENT | AMOUNT_MISMATCH | EVENT_BODY_CONFLICT |
+ *         UNKNOWN_EVENT_TYPE | INVALID_OBJECT
+ */
+export function handleServerWebhookDeliveryOnce(
+  rawBody: string,
+  header: unknown,
+  secret: unknown,
+  opts: ServerWebhookDispatchOptions = {}
+): ServerWebhookDeliveryResult {
+  // Verify + parse first: the duplicate answer is only meaningful for
+  // an event we can actually identify (id/type at top level).
+  const event = parseServerWebhookEvent(rawBody, header, secret, opts);
+  try {
+    return {
+      status: "processed",
+      effect: handleServerWebhookEvent(event, opts, bodyHashOf(rawBody)),
+    };
+  } catch (e) {
+    if (isAlreadyHandled(e)) {
+      return { status: "already_processed", eventId: event.id };
+    }
+    throw e;
+  }
 }
 
 export { SERVER_WEBHOOK_ERROR_CODES };
