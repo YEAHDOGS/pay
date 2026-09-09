@@ -42,6 +42,11 @@
  *     a validated receipt does.
  *   - Handler-level idempotency: each verified event id produces
  *     exactly one effect; redelivery throws ALREADY_HANDLED.
+ *   - Every delivery leaves an audit line (webhook.received /
+ *     effect.produced / delivery.rejected) in the swappable audit
+ *     log — the ledger keeps exactly-once, the audit trail keeps
+ *     the receipt of what exactly-once did. Audit is best-effort:
+ *     it can never block or alter an effect.
  *   - Unknown event types throw UNKNOWN_EVENT_TYPE. New processor
  *     events are added by extending `WebhookEventType` + the dispatch
  *     map — nothing else.
@@ -69,6 +74,15 @@ import {
   MemoryIdempotencyLedger,
   FileIdempotencyLedger,
 } from "./idempotency-ledger";
+
+import {
+  AUDIT_EVENT_KINDS,
+  type AuditEventKind,
+  type AuditFields,
+  type AuditLog,
+  MemoryAuditLog,
+  FileAuditLog,
+} from "./audit-log";
 
 /* ── Hoisted constants ───────────────────────────────────────────── */
 
@@ -190,6 +204,81 @@ export function getHandlerLedger(): IdempotencyLedger {
 
 export { FileIdempotencyLedger };
 
+/* ── Audit trail (append-only; never blocks fulfillment) ─────────── */
+
+/**
+ * Every delivery milestone through the server seam gets a line:
+ * `webhook.received` after verify, `effect.produced` after dispatch,
+ * `delivery.rejected` on any verify/dispatch failure. The default log
+ * is in-memory — drills and tests reset it freely. A LIVE staging
+ * route must persist the trail across restarts: swap in a file-backed
+ * adapter (same interface) before handling traffic:
+ *
+ *   setAuditLog(new FileAuditLog("/var/lib/staging/webhook-audit.jsonl"));
+ *
+ * Records carry ids, event types, effect names, and error codes ONLY —
+ * no payloads, no signatures, no secrets, no PII.
+ */
+let auditLog: AuditLog = new MemoryAuditLog();
+
+/**
+ * Swap the audit log. Pass a `FileAuditLog` (or any `AuditLog`) for a
+ * live staging route; the drills and tests keep the in-memory default.
+ */
+export function setAuditLog(log: AuditLog): void {
+  if (
+    !log ||
+    typeof log.record !== "function" ||
+    typeof log.entries !== "function" ||
+    typeof log.clear !== "function"
+  ) {
+    throw handlerErr(
+      HANDLER_ERROR_CODES.INVALID_OBJECT,
+      "setAuditLog needs an AuditLog (record/entries/clear/size)."
+    );
+  }
+  auditLog = log;
+}
+
+/** The currently installed audit log (drill default: in-memory). */
+export function getAuditLog(): AuditLog {
+  return auditLog;
+}
+
+export { FileAuditLog };
+
+/**
+ * Record an audit milestone. Best-effort BY DESIGN: a failing adapter
+ * (full disk, bad path) must never throw here — the effect still goes
+ * out, and the worst case is a missing audit line, never a lost
+ * fulfillment. Belt and suspenders: the adapters never throw on valid
+ * input either.
+ */
+function audit(kind: AuditEventKind, fields: AuditFields = {}): void {
+  try {
+    auditLog.record(kind, fields);
+  } catch {
+    // Audit is best-effort — never block delivery on it.
+  }
+}
+
+/**
+ * Persist the event id in the idempotency ledger AND note the
+ * produced effect in the audit trail. The ledger keeps exactly-once;
+ * the audit trail keeps the receipt of what exactly-once did.
+ */
+function commitEffect(
+  event: TestWebhookEvent,
+  effectName: WebhookEffect["effect"]
+): void {
+  handlerLedger.add(event.id);
+  audit(AUDIT_EVENT_KINDS.EFFECT_PRODUCED, {
+    eventId: event.id,
+    eventType: event.type,
+    effect: effectName,
+  });
+}
+
 /* ── Dispatch ────────────────────────────────────────────────────── */
 
 /**
@@ -226,7 +315,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           `checkout.session.completed carried no valid receipt — never unlocking on a ${obj && typeof obj === "object" ? "non-receipt" : "missing"} payload.`
         );
       }
-      handlerLedger.add(event.id);
+      commitEffect(event, "unlock_deliverable");
       return effect(event, "unlock_deliverable", obj);
     }
     case "payment_intent.succeeded": {
@@ -236,7 +325,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           "payment_intent.succeeded carried no valid receipt."
         );
       }
-      handlerLedger.add(event.id);
+      commitEffect(event, "record_payment");
       return effect(event, "record_payment", obj);
     }
     case "customer.subscription.created": {
@@ -246,7 +335,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           "customer.subscription.created carried no valid active subscription."
         );
       }
-      handlerLedger.add(event.id);
+      commitEffect(event, "provision_subscription");
       return effect(event, "provision_subscription", obj);
     }
     case "customer.subscription.updated": {
@@ -256,7 +345,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           "customer.subscription.updated carried no valid active subscription."
         );
       }
-      handlerLedger.add(event.id);
+      commitEffect(event, "sync_subscription");
       return effect(event, "sync_subscription", obj);
     }
     case "customer.subscription.canceled": {
@@ -270,7 +359,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
       const accessUntil = plan.keepAccessToPeriodEnd
         ? new Date(new Date(obj.startedAt).getTime() + MONTH_MILLIS).toISOString()
         : new Date().toISOString();
-      handlerLedger.add(event.id);
+      commitEffect(event, "grant_access_to_period_end");
       return effect(event, "grant_access_to_period_end", obj, accessUntil);
     }
     default: {
@@ -302,16 +391,43 @@ export function handleTestWebhookDelivery(
     toleranceSeconds?: number;
   } = {}
 ): WebhookEffect {
-  const event = parseTestWebhookEvent(rawBody, signature, opts);
-  return handleTestWebhookEvent(event);
+  let event: TestWebhookEvent;
+  try {
+    event = parseTestWebhookEvent(rawBody, signature, opts);
+  } catch (e) {
+    // Verification failed: log the rejection (code only, no body) and
+    // rethrow — nothing reached dispatch, no effect was produced.
+    audit(AUDIT_EVENT_KINDS.DELIVERY_REJECTED, {
+      code: (e as { code?: string }).code,
+    });
+    throw e;
+  }
+  audit(AUDIT_EVENT_KINDS.WEBHOOK_RECEIVED, {
+    eventId: event.id,
+    eventType: event.type,
+  });
+  try {
+    return handleTestWebhookEvent(event);
+  } catch (e) {
+    // Dispatch failed (UNKNOWN_EVENT_TYPE / INVALID_OBJECT /
+    // ALREADY_HANDLED): the rejection goes in the trail, then the
+    // error propagates to the route.
+    audit(AUDIT_EVENT_KINDS.DELIVERY_REJECTED, {
+      eventId: event.id,
+      eventType: event.type,
+      code: (e as { code?: string }).code,
+    });
+    throw e;
+  }
 }
 
 /**
- * Reset the handler ledger. For tests only — the parse replay ledger
- * is reset separately via `resetWebhookFixtures()`.
+ * Reset the handler ledger AND the audit log. For tests only — the
+ * parse replay ledger is reset separately via `resetWebhookFixtures()`.
  */
 export function resetWebhookHandler(): void {
   handlerLedger.clear();
+  auditLog.clear();
 }
 
 export { ERROR_CODES };
