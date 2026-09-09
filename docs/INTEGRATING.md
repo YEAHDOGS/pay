@@ -270,6 +270,24 @@ lines, which are reported, never matched. A live route journals its
 effects and reconciles against the real statement on a schedule;
 here it is a pure function, so the drill is deterministic.
 
+**`resolveDeliveryFailure(err, attemptsUsed, ctx)`** (`lib/webhook-delivery.ts`)
+is the one call your route's catch block makes on a delivery failure.
+It classifies the error code so retries are never wrong:
+
+- **ack** — duplicates (`REPLAYED_EVENT`, `ALREADY_HANDLED`,
+  `DUPLICATE_REFUND`): acknowledged, never re-processed, nothing to do.
+- **retry** — the only retryable code is `REFUND_BEFORE_CAPTURE` (the
+  handler deliberately doesn't mark the event id handled on refund guard
+  failures, so the retry can land once the out-of-order capture arrives).
+  Backoff is deterministic and bounded (default 5s → 10s → 20s → 40s,
+  then stop — `makeDeliveryPolicy` for custom bounds).
+- **dead-letter** — everything else, including forged signatures,
+  `PAYLOAD_CONFLICT`, `EXPIRED_EVENT`, and ANY unknown code (fail
+  closed: never retry what you can't name). Records carry ids, event
+  types, and codes only — no payloads, no secrets, no PII — in a
+  bounded `DeadLetterQueue` (FIFO eviction, `evictedCount` keeps the
+  loss honest).
+
 ## 9. Refunds + reversals (the money guard rail)
 
 `lib/refund-ledger.ts` + the handler's `charge.refunded` dispatch are
