@@ -15,13 +15,20 @@ import {
   deliverTestWebhookEvent,
   parseTestWebhookEvent,
   resetWebhookFixtures,
+  signTestWebhookPayload,
+  TEST_WEBHOOK_SECRET,
   type TestWebhookEvent,
 } from "./webhook-test";
 import {
   HANDLER_ERROR_CODES,
+  BOUNDED_LEDGER_DEFAULTS,
+  BoundedIdempotencyLedger,
+  getAuditLog,
+  getHandlerLedger,
   handleTestWebhookDelivery,
   handleTestWebhookEvent,
   resetWebhookHandler,
+  setHandlerLedger,
 } from "./webhook-handler";
 
 /* ── Test harness: fresh ledgers + fresh fixture objects every test ─ */
@@ -184,5 +191,131 @@ describe("handleTestWebhookEvent — dispatch guards", () => {
     resetWebhookHandler();
     const again = handleTestWebhookEvent(event);
     expect(again.effect).toBe("unlock_deliverable");
+  });
+});
+
+describe("idempotency hardening — duplicates, out-of-order, conflicts", () => {
+  test("duplicate event id is acknowledged but NEVER re-processed (ALREADY_HANDLED)", () => {
+    const receipt = paidReceipt();
+    const { rawBody, signature } = deliver("checkout.session.completed", receipt);
+    const first = handleTestWebhookDelivery(rawBody, signature);
+    expect(first.effect).toBe("unlock_deliverable");
+
+    // The parse-level replay gate would fire first — clear it so the
+    // duplicate reaches the HANDLER ledger, the layer under test.
+    resetWebhookFixtures();
+    expect(() => handleTestWebhookDelivery(rawBody, signature)).toThrow(
+      expect.objectContaining({ code: HANDLER_ERROR_CODES.ALREADY_HANDLED })
+    );
+    // Still exactly one recorded id: no second effect was produced.
+    expect(getHandlerLedger().size).toBe(1);
+    // The audit trail shows the ack: received → produced → rejected.
+    const trail = getAuditLog()
+      .entries()
+      .map((r) => `${r.kind}:${r.code ?? ""}`);
+    expect(trail).toEqual([
+      "webhook.received:",
+      "effect.produced:",
+      "webhook.received:",
+      `delivery.rejected:${HANDLER_ERROR_CODES.ALREADY_HANDLED}`,
+    ]);
+  });
+
+  test("out-of-order events settle correctly: each id earns exactly one effect", () => {
+    const sub = activeSubscription();
+    const now = Math.floor(Date.now() / 1000);
+    // The LATER event (subscription.created) is delivered FIRST; the
+    // EARLIER one (subscription.updated) arrives after — a classic
+    // retry-storm ordering. Both must settle exactly once.
+    const later = deliverTestWebhookEvent("customer.subscription.created", sub, { created: now });
+    const earlier = deliverTestWebhookEvent("customer.subscription.updated", sub, { created: now - 60 });
+    const fxFirst = handleTestWebhookDelivery(later.rawBody, later.signature);
+    const fxSecond = handleTestWebhookDelivery(earlier.rawBody, earlier.signature);
+    expect(fxFirst.effect).toBe("provision_subscription");
+    expect(fxSecond.effect).toBe("sync_subscription");
+    expect(getHandlerLedger().size).toBe(2);
+
+    // Redelivery of either (parse gate cleared) is refused, not
+    // re-processed — arrival order never changes the outcome.
+    resetWebhookFixtures();
+    expect(() => handleTestWebhookDelivery(later.rawBody, later.signature)).toThrow(
+      expect.objectContaining({ code: HANDLER_ERROR_CODES.ALREADY_HANDLED })
+    );
+    resetWebhookFixtures();
+    expect(() => handleTestWebhookDelivery(earlier.rawBody, earlier.signature)).toThrow(
+      expect.objectContaining({ code: HANDLER_ERROR_CODES.ALREADY_HANDLED })
+    );
+    expect(getHandlerLedger().size).toBe(2);
+  });
+
+  test("same event id with a DIFFERENT payload → PAYLOAD_CONFLICT (never swallowed)", () => {
+    const receipt = paidReceipt();
+    const { rawBody, signature, event } = deliver("checkout.session.completed", receipt);
+    handleTestWebhookDelivery(rawBody, signature);
+
+    // Craft a byte-different body for the SAME event id: bump `created`
+    // 30s (stays inside the 300s freshness window), then re-sign with
+    // the fixture key — this is exactly what a tampered replay looks
+    // like on the wire.
+    const forged = { ...JSON.parse(rawBody), created: event.created + 30 };
+    const forgedBody = JSON.stringify(forged);
+    const forgedSignature = signTestWebhookPayload(
+      forgedBody,
+      TEST_WEBHOOK_SECRET,
+      forged.created
+    );
+    resetWebhookFixtures(); // let it past the parse-level gate
+    expect(() => handleTestWebhookDelivery(forgedBody, forgedSignature)).toThrow(
+      expect.objectContaining({ code: HANDLER_ERROR_CODES.PAYLOAD_CONFLICT })
+    );
+    // One id, one effect — the forged replay earned nothing.
+    expect(getHandlerLedger().size).toBe(1);
+    const rejected = getAuditLog()
+      .entries()
+      .filter((r) => r.kind === "delivery.rejected" && r.eventId === event.id)
+      .map((r) => r.code);
+    expect(rejected).toEqual([HANDLER_ERROR_CODES.PAYLOAD_CONFLICT]);
+  });
+
+  test("direct handler calls without a fingerprint fall back to ALREADY_HANDLED", () => {
+    const receipt = paidReceipt();
+    const { rawBody, signature } = deliver("checkout.session.completed", receipt);
+    const event = parseTestWebhookEvent(rawBody, signature);
+    handleTestWebhookEvent(event);
+    // No fingerprint supplied: the handler can't judge payload sameness,
+    // so a repeat is the classic acknowledged duplicate.
+    expect(() => handleTestWebhookEvent(event)).toThrow(
+      expect.objectContaining({ code: HANDLER_ERROR_CODES.ALREADY_HANDLED })
+    );
+  });
+
+  test("handler default ledger is bounded: 10k+ deliveries don't grow memory", () => {
+    const ledger = getHandlerLedger();
+    expect(ledger).toBeInstanceOf(BoundedIdempotencyLedger);
+    expect((ledger as BoundedIdempotencyLedger).capacity).toBe(
+      BOUNDED_LEDGER_DEFAULTS.MAX_ENTRIES
+    );
+    // Prove boundedness end-to-end through the intake with a small cap:
+    // 60 distinct valid events, cap 50 → never more than 50 ids held,
+    // and no delivery ever throws on capacity.
+    setHandlerLedger(
+      new BoundedIdempotencyLedger({ maxEntries: 50, ttlSeconds: 0 })
+    );
+    for (let i = 0; i < 60; i++) {
+      const { rawBody, signature } = deliver(
+        "payment_intent.succeeded",
+        paidReceipt()
+      );
+      handleTestWebhookDelivery(rawBody, signature);
+    }
+    const small = getHandlerLedger() as BoundedIdempotencyLedger;
+    expect(small.size).toBeLessThanOrEqual(50);
+    // And the most recent deliveries still dedupe correctly.
+    const last = deliver("payment_intent.succeeded", paidReceipt());
+    handleTestWebhookDelivery(last.rawBody, last.signature);
+    resetWebhookFixtures();
+    expect(() => handleTestWebhookDelivery(last.rawBody, last.signature)).toThrow(
+      expect.objectContaining({ code: HANDLER_ERROR_CODES.ALREADY_HANDLED })
+    );
   });
 });
