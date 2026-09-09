@@ -1,1 +1,26 @@
-{"dependencies":{"next":"^15.3.0","react":"^19.1.0","react-dom":"^19.1.0"},"description":"Decentralized p2p payments platform — reference web client","devDependencies":{"@types/node":"^22.0.0","@types/react":"^19.1.0","@types/react-dom":"^19.1.0","typescript":"^5.8.0"},"license":"MIT","name":"@yeahdogs/pay","private":true,"scripts":{"build":"next build","dev":"next dev","lint":"next lint","start":"next start","typecheck":"tsc --noEmit"},"version":"0.0.1"}
+{
+  "dependencies": {
+    "next": "^15.3.0",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "description": "Decentralized p2p payments platform — reference web client",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "typescript": "^5.8.0"
+  },
+  "license": "MIT",
+  "name": "@yeahdogs/pay",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "lint": "next lint",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test lib"
+  },
+  "version": "0.0.1"
+}
