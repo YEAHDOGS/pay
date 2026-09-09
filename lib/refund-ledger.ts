@@ -153,19 +153,22 @@ export function issueTestRefund(args: {
  */
 export function isValidTestRefund(refund: unknown): refund is TestRefund {
   const r = refund as Partial<TestRefund> | null;
+  if (!r || typeof r !== "object") return false;
+  // Destructure into consts: property-access narrowing is invalidated
+  // by the method calls below, const locals narrow cleanly.
+  const { id, paymentId, amountCents, currency, refundedAt, testMode } = r;
   return (
-    !!r &&
-    typeof r === "object" &&
-    r.testMode === true &&
-    typeof r.id === "string" &&
-    r.id.startsWith("rfnd_test_") &&
-    typeof r.paymentId === "string" &&
-    r.paymentId.startsWith("rcpt_test_") &&
-    Number.isInteger(r.amountCents) &&
-    r.amountCents > 0 &&
-    typeof r.currency === "string" &&
-    r.currency.length > 0 &&
-    typeof r.refundedAt === "string"
+    testMode === true &&
+    typeof id === "string" &&
+    id.startsWith("rfnd_test_") &&
+    typeof paymentId === "string" &&
+    paymentId.startsWith("rcpt_test_") &&
+    typeof amountCents === "number" &&
+    Number.isInteger(amountCents) &&
+    amountCents > 0 &&
+    typeof currency === "string" &&
+    currency.length > 0 &&
+    typeof refundedAt === "string"
   );
 }
 
