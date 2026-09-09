@@ -304,3 +304,124 @@ describe("no in-repo secrets", () => {
     }
   });
 });
+
+describe("server-side amount expectation (AMOUNT_MISMATCH)", () => {
+  /** Deliver with an explicit server-side price expectation. */
+  function deliverExpected(
+    body: string,
+    opts: {
+      expectedAmountTotal?: number;
+      expectedCurrency?: string;
+      eventId?: string;
+    }
+  ) {
+    const header = signServerWebhookPayload(body, UNIT_SECRET, NOW);
+    return handleServerWebhookDelivery(body, header, UNIT_SECRET, {
+      nowSeconds: NOW,
+      expectedAmountTotal: opts.expectedAmountTotal,
+      expectedCurrency: opts.expectedCurrency,
+    });
+  }
+
+  function sessionBodyWith(id: string, amountTotal: number, currency: string) {
+    return JSON.stringify({
+      id,
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_test_123",
+          amount_total: amountTotal,
+          currency,
+          payment_status: "paid",
+        },
+      },
+    });
+  }
+
+  test("matching expectation records the payment", () => {
+    const effect = deliverExpected(sessionBodyWith("evt_amt_ok_1", 3000, "usd"), {
+      expectedAmountTotal: 3000,
+      expectedCurrency: "usd",
+    });
+    expect(effect.effect).toBe("record_payment");
+    expect(effect.payment.amountTotal).toBe(3000);
+  });
+
+  test("currency expectation is case-insensitive", () => {
+    const effect = deliverExpected(sessionBodyWith("evt_amt_ci_1", 3000, "usd"), {
+      expectedAmountTotal: 3000,
+      expectedCurrency: "USD",
+    });
+    expect(effect.payment.eventId).toBe("evt_amt_ci_1");
+  });
+
+  test("under-reported amount throws AMOUNT_MISMATCH", () => {
+    expect(() =>
+      deliverExpected(sessionBodyWith("evt_amt_low_1", 2999, "usd"), {
+        expectedAmountTotal: 3000,
+      })
+    ).toThrow(
+      expect.objectContaining({ code: SERVER_DISPATCH_ERROR_CODES.AMOUNT_MISMATCH })
+    );
+  });
+
+  test("over-reported amount throws AMOUNT_MISMATCH (exact match required)", () => {
+    expect(() =>
+      deliverExpected(sessionBodyWith("evt_amt_high_1", 3001, "usd"), {
+        expectedAmountTotal: 3000,
+      })
+    ).toThrow(
+      expect.objectContaining({ code: SERVER_DISPATCH_ERROR_CODES.AMOUNT_MISMATCH })
+    );
+  });
+
+  test("currency swap throws AMOUNT_MISMATCH", () => {
+    expect(() =>
+      deliverExpected(sessionBodyWith("evt_amt_cur_1", 3000, "eur"), {
+        expectedAmountTotal: 3000,
+        expectedCurrency: "usd",
+      })
+    ).toThrow(
+      expect.objectContaining({ code: SERVER_DISPATCH_ERROR_CODES.AMOUNT_MISMATCH })
+    );
+  });
+
+  test("mismatch does not mark the ledger — a correct retry stays retryable", () => {
+    const body = sessionBodyWith("evt_amt_retry_1", 2999, "usd");
+    const header = signServerWebhookPayload(body, UNIT_SECRET, NOW);
+    expect(() =>
+      handleServerWebhookDelivery(body, header, UNIT_SECRET, {
+        nowSeconds: NOW,
+        expectedAmountTotal: 3000,
+      })
+    ).toThrow(
+      expect.objectContaining({ code: SERVER_DISPATCH_ERROR_CODES.AMOUNT_MISMATCH })
+    );
+    // Same event id, no expectation → must still dispatch (ledger was
+    // only marked after success, which never happened).
+    const effect = handleServerWebhookDelivery(body, header, UNIT_SECRET, {
+      nowSeconds: NOW,
+    });
+    expect(effect.payment.eventId).toBe("evt_amt_retry_1");
+  });
+
+  test("malformed expectation (zero/non-integer) fails closed with AMOUNT_MISMATCH", () => {
+    for (const bad of [0, -3000, 30.5]) {
+      expect(() =>
+        deliverExpected(sessionBodyWith(`evt_amt_badexp_${bad}`, 3000, "usd"), {
+          expectedAmountTotal: bad,
+        })
+      ).toThrow(
+        expect.objectContaining({
+          code: SERVER_DISPATCH_ERROR_CODES.AMOUNT_MISMATCH,
+        })
+      );
+    }
+  });
+
+  test("no expectation supplied → previous behavior unchanged", () => {
+    const effect = deliver(sessionBodyWith("evt_amt_none_1", 999999, "gbp"));
+    expect(effect.effect).toBe("record_payment");
+    expect(effect.payment.amountTotal).toBe(999999);
+  });
+});
