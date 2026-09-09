@@ -45,6 +45,18 @@ throw `INVALID_AMOUNT`.
 
 ## How divorce consumes it
 
+`lib/divorce-checkout.ts` is the first in-repo consumer: `startDivorceCheckout()`
+opens the $30 packet session and `confirmDivorceCheckout()` confirms with the
+test card through the seam (it also guards against catalog price drift so a
+moved price throws instead of selling the wrong amount). divorce's own modal
+logic stays in the divorce repo — only the money step lives here:
+
+```js
+const session = startDivorceCheckout();         // $30 packet session
+const receipt = confirmDivorceCheckout(session); // test card 4242…
+if (!isValidTestReceipt(receipt)) throw new Error("bad receipt");
+```
+
 divorce's staging flow already proves this pattern with
 `src/lib/stripe-test.js`: questionnaire → checkout modal → receipt →
 printable packet. To migrate to the shared contract:
@@ -58,6 +70,14 @@ if (!isValidTestReceipt(receipt)) throw new Error("bad receipt");
 
 (Prefer the provider seam above — `getProvider().createSession(...)` —
 direct `checkout-test.ts` calls remain the fixture engine underneath.)
+
+## How wax consumes it
+
+`lib/subscription-plans.ts` is the recurring-plan model behind the seam:
+`describePlan()` derives the plan descriptor (price, interval, trial) from
+the catalog product, `startWaxSubscription()` runs the lifecycle through the
+provider, and `nextRenewalDate()` / `cancelSubscription()` give wax's alert
+engine renewal scheduling and period-end cancellation as pure fixtures.
 
 ## How wax consumes it
 
