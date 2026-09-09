@@ -16,6 +16,7 @@ import type {
   Invoice,
   InvoiceStatus,
   PaymentResult,
+  PayInvoiceOptions,
   RailAdapter,
   RailEvent,
   Unsubscribe,
@@ -53,6 +54,13 @@ export class MockRail implements RailAdapter {
   private readonly invoices = new Map<string, Invoice>();
   private readonly listeners = new Map<RailEvent, Set<(r: PaymentResult) => void>>();
   private readonly invoiceTtlMs: number;
+  /**
+   * Idempotency ledger: key → the settled result of the attempt it
+   * named. A retry carrying the same key for the same invoice returns
+   * the stored result WITHOUT touching balances or the journal again.
+   */
+  private readonly idempotency = new Map<string, PaymentResult>();
+  private readonly idempotencyInvoice = new Map<string, string>();
 
   constructor(options: MockRailOptions = {}) {
     const startingBalance = options.startingBalance ?? 100_000;
@@ -114,7 +122,27 @@ export class MockRail implements RailAdapter {
     return this.withStatus(current, "cancelled");
   }
 
-  async payInvoice(invoiceId: string): Promise<PaymentResult> {
+  async payInvoice(
+    invoiceId: string,
+    opts: PayInvoiceOptions = {},
+  ): Promise<PaymentResult> {
+    const { idempotencyKey } = opts;
+
+    // Idempotent retry: same key + same invoice → replay the original
+    // result with NO state change. No second debit, no second event.
+    if (idempotencyKey !== undefined) {
+      const seen = this.idempotency.get(idempotencyKey);
+      if (seen) {
+        const seenInvoice = this.idempotencyInvoice.get(idempotencyKey);
+        if (seenInvoice === invoiceId) {
+          return seen;
+        }
+        throw new Error(
+          `idempotency key reused for a different invoice: key was for ${seenInvoice}, now ${invoiceId}`,
+        );
+      }
+    }
+
     const invoice = this.invoices.get(invoiceId);
     if (!invoice) {
       throw new Error(`unknown invoice: ${invoiceId}`);
@@ -141,6 +169,10 @@ export class MockRail implements RailAdapter {
       confirmations: 1,
       settledAt: Date.now(),
     };
+    if (idempotencyKey !== undefined) {
+      this.idempotency.set(idempotencyKey, result);
+      this.idempotencyInvoice.set(idempotencyKey, invoiceId);
+    }
     this.emit("invoice-paid", result);
     return result;
   }

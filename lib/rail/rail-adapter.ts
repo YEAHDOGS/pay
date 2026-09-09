@@ -46,6 +46,21 @@ export type RailEvent = "invoice-paid";
 /** Unsubscribe function returned by `on`. */
 export type Unsubscribe = () => void;
 
+/**
+ * Options for `payInvoice`.
+ *
+ * `idempotencyKey` is a client-generated unique token for ONE payment
+ * attempt. Real rails ride on unreliable networks: the payer's request
+ * can succeed server-side while the response is lost, and the client
+ * retries. A real adapter MUST treat a retry carrying the same key for
+ * the same invoice as the same attempt — return the original result,
+ * never debit twice and never throw. The same key used for a DIFFERENT
+ * invoice is a client bug and MUST throw.
+ */
+export interface PayInvoiceOptions {
+  readonly idempotencyKey?: string;
+}
+
 export interface RailAdapter {
   readonly id: string;
   readonly displayName: string;
@@ -53,7 +68,10 @@ export interface RailAdapter {
 
   createInvoice(amount: number, memo?: string): Promise<Invoice>;
   getInvoice(id: string): Promise<Invoice | null>;
-  payInvoice(invoiceId: string): Promise<PaymentResult>;
+  payInvoice(
+    invoiceId: string,
+    opts?: PayInvoiceOptions,
+  ): Promise<PaymentResult>;
   cancelInvoice(invoiceId: string): Promise<Invoice>;
   getBalance(): Promise<Balance>;
 
