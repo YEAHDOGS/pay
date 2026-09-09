@@ -30,7 +30,8 @@
  *     reviews, which ships its own verifier for THIS EVENT SHAPE.
  *   - Signatures are HMAC-SHA256 over the exact raw body, compared in
  *     constant time (timingSafeEqual). Tampered payloads, wrong
- *     secrets, expired timestamps, and replayed event ids all throw.
+ *     secrets, expired timestamps, replayed event ids, and
+ *     signature-header/body timestamp mismatches all throw.
  *   - Event ids are DETERMINISTIC: the same (type, object id) always
  *     produces the same `evt_test_*` id, so tests and staging fixtures
  *     are reproducible. No randomness, no Date.now in the id.
@@ -70,6 +71,14 @@ export const WEBHOOK_ERROR_CODES = Object.freeze({
   EXPIRED_EVENT: "EXPIRED_EVENT",
   REPLAYED_EVENT: "REPLAYED_EVENT",
   BAD_EVENT: "BAD_EVENT",
+  /**
+   * The signature header's `t=` timestamp (which the HMAC signs over)
+   * disagrees with the event body's own `created` timestamp. Two
+   * clocks for "when this fired" that disagree mean the signature was
+   * hand-rolled for different timing than the event claims — the
+   * freshness check below would otherwise measure the wrong clock.
+   */
+  TIMESTAMP_MISMATCH: "TIMESTAMP_MISMATCH",
 });
 
 export type WebhookEventType =
@@ -224,6 +233,16 @@ export function verifyTestWebhookSignature(
 /* ── Parser: the modal's "unlock the packet" gate ─────────────────── */
 
 /**
+ * Extract the `t=` unix-seconds timestamp from a signature header
+ * (`t=<ts>,v1=<hex>`). Returns null for anything malformed.
+ */
+function signatureHeaderTimestamp(signature: string): number | null {
+  if (typeof signature !== "string") return null;
+  const m = signature.match(/^t=(\d+),v1=[0-9a-f]{64}$/);
+  return m ? Number(m[1]) : null;
+}
+
+/**
  * Verify a delivered webhook and return the event. This is the function
  * divorce's modal calls before rendering the printable packet:
  *
@@ -231,10 +250,11 @@ export function verifyTestWebhookSignature(
  *   if (!isValidTestReceipt(event.data.object)) throw … // never unlock
  *
  * Rejects: bad/forged signatures, stale events (>300s old or from the
- * future beyond tolerance), replayed event ids, and anything that isn't
- * an unmistakable test-mode fixture event.
+ * future beyond tolerance), replayed event ids, signature-header
+ * timestamps that disagree with the body's `created`, and anything
+ * that isn't an unmistakable test-mode fixture event.
  *
- * @throws BAD_SIGNATURE | EXPIRED_EVENT | REPLAYED_EVENT | BAD_EVENT
+ * @throws BAD_SIGNATURE | EXPIRED_EVENT | REPLAYED_EVENT | BAD_EVENT | TIMESTAMP_MISMATCH
  */
 export function parseTestWebhookEvent(
   rawBody: string,
@@ -273,6 +293,19 @@ export function parseTestWebhookEvent(
   }
   const now = opts.nowSeconds ?? Math.floor(Date.now() / 1000);
   const tolerance = opts.toleranceSeconds ?? WEBHOOK_TOLERANCE_SECONDS;
+  // The header `t=` is part of the signed payload (the HMAC covers
+  // `ts.rawBody`), so a valid signature binds it — but nothing before
+  // now forced it to AGREE with the body's `created`. A hand-rolled
+  // signature could stamp an old header ts on a fresh-looking body
+  // (or vice versa), and the freshness check below would measure the
+  // wrong clock. `deliverTestWebhookEvent` always sets both equal, so
+  // disagreement is always a hand-forged signature — reject it loudly.
+  if (signatureHeaderTimestamp(signature) !== event.created) {
+    throw err(
+      WEBHOOK_ERROR_CODES.TIMESTAMP_MISMATCH,
+      "signature header timestamp disagrees with the event body's created — refusing to measure freshness against a mismatched clock."
+    );
+  }
   if (Math.abs(now - event.created) > tolerance) {
     throw err(
       WEBHOOK_ERROR_CODES.EXPIRED_EVENT,

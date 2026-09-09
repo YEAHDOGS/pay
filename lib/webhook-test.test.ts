@@ -175,6 +175,44 @@ describe("parseTestWebhookEvent — the modal unlock gate", () => {
     ).toThrow(expect.objectContaining({ code: WEBHOOK_ERROR_CODES.EXPIRED_EVENT }));
   });
 
+  test("signature header t= disagreeing with body created throws TIMESTAMP_MISMATCH", () => {
+    const session = createTestCheckout("uncontested_packet");
+    const receipt = confirmTestPayment(session.id, session);
+    const NOW = 1_700_000;
+    // Normal delivery stamps header t= == body created. Re-sign the
+    // same body with a DIFFERENT header timestamp: a hand-forged
+    // signature for timing the freshness clock can't trust.
+    const { rawBody } = deliverTestWebhookEvent(
+      "checkout.session.completed",
+      receipt,
+      { created: NOW }
+    );
+    const mismatched = signTestWebhookPayload(
+      rawBody,
+      TEST_WEBHOOK_SECRET,
+      NOW + 3600
+    );
+    expect(() =>
+      parseTestWebhookEvent(rawBody, mismatched, { nowSeconds: NOW })
+    ).toThrow(
+      expect.objectContaining({ code: WEBHOOK_ERROR_CODES.TIMESTAMP_MISMATCH })
+    );
+  });
+
+  test("matching header t= and body created still parses", () => {
+    const session = createTestCheckout("uncontested_packet");
+    const receipt = confirmTestPayment(session.id, session);
+    const NOW = 1_700_000;
+    const { rawBody } = deliverTestWebhookEvent(
+      "checkout.session.completed",
+      receipt,
+      { created: NOW }
+    );
+    const matching = signTestWebhookPayload(rawBody, TEST_WEBHOOK_SECRET, NOW);
+    const event = parseTestWebhookEvent(rawBody, matching, { nowSeconds: NOW });
+    expect(event.created).toBe(NOW);
+  });
+
   test("replayed event id throws REPLAYED_EVENT", () => {
     const session = createTestCheckout("uncontested_packet");
     const { rawBody, signature } = deliverTestWebhookEvent(
