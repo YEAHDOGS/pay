@@ -214,3 +214,9 @@ refuses it by construction.
 - [ ] Replay (`REPLAYED_EVENT`) and expiry (`EXPIRED_EVENT`) paths tested
 - [ ] No keys, tokens, or card numbers in client code or git history
 - [ ] `bun test` in `pay/` is green before you commit
+- [ ] Ran the money-milestone drills as the loop reference:
+      `runDivorceStagingDrill()` → `unlock_deliverable` ($30 packet),
+      `runWaxStagingDrill()` → `provision_subscription` ($10/mo),
+      `runDivorceDeclineDrill()` → decline with no unlock. See
+      `lib/staging-drill.ts` — your staging webhook route mirrors its
+      verify-then-dispatch shape.
