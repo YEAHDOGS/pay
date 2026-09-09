@@ -113,12 +113,17 @@ describe("lock path: replay", () => {
     const drill = runServerDivorceCheckoutDrill(NOW);
     expect(drill.packetUnlocked).toBe(true);
     // Re-deliver the identical signed bytes (Stripe retries on non-2xx).
+    // NOTE: the bytes must be truly identical to the drill's first
+    // delivery — the drill's body includes "object": "checkout.session"
+    // in the session object, and a redelivery with any different bytes
+    // under the same event id throws EVENT_BODY_CONFLICT instead.
     const rawBody = JSON.stringify({
       id: "evt_drill_server_divorce_1",
       type: "checkout.session.completed",
       data: {
         object: {
           id: drill.session.id,
+          object: "checkout.session",
           amount_total: 3000,
           currency: "usd",
           payment_status: "paid",
