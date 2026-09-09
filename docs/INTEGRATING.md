@@ -217,6 +217,37 @@ contract the live verifier honors. Nothing in this guide or in
 anything other than `whsec_test_fixture_`, `assertFixtureSecret`
 refuses it by construction.
 
+## 8. The receipt front door + the settlement drill
+
+Two more pieces complete the loop your staging route will run:
+
+**`receiveTestWebhook(rawBody, signature)`** (`lib/webhook-receipt.ts`) is
+the HTTP-shaped front door — the body plus the possibly-absent
+signature header. Before `handleTestWebhookDelivery` ever sees the
+delivery it rejects:
+
+- a missing/empty signature header → `MISSING_SIGNATURE` (distinct
+  from `BAD_SIGNATURE`, so forensics can tell "no header" from "forged
+  header" from "tampered body");
+- an oversized body (>1 MiB) → `BODY_TOO_LARGE`, before the HMAC or
+  `JSON.parse` burns any work on it.
+
+Both rejections land in the audit trail as `delivery.rejected` with
+the code only — no bodies, no signatures. After the front door,
+everything travels the same verify → dispatch → audit path.
+
+**`reconcileTestSettlement({ localEffects, statement })`**
+(`lib/reconcile.ts`) is the drill for real-money confidence: the
+route's produced `WebhookEffect`s (lifted via
+`localEffectFromWebhookEffect`) against the provider's settlement
+statement (`buildTestStatement`, `stmt_test_*` fixture ids). The
+report flags the three operational failures by name — `missing`
+(settled, never fulfilled), `extra` (fulfilled, never settled),
+`amountMismatch` (same event, different money) — plus `refunded`
+lines, which are reported, never matched. A live route journals its
+effects and reconciles against the real statement on a schedule;
+here it is a pure function, so the drill is deterministic.
+
 ## Checklist before you call the money milestone done
 
 - [ ] Session created through `getProvider()` / `startDivorceCheckout()`
