@@ -70,6 +70,7 @@ pay/
 │   ├── webhook-test.ts         # Signed webhook event fixtures (modal unlock gate)
 │   ├── webhook-receipt.ts      # HTTP-shaped front door: missing-signature + oversize-body rejection before verify
 │   ├── webhook-handler.ts      # Dispatch skeleton: verified event → product effect
+│   ├── webhook-delivery.ts     # Delivery semantics: classify failures (ack/retryable/fatal), bounded backoff, dead-letter queue
 │   ├── reconcile.ts            # Settlement drill: produced effects vs provider statement fixture
 │   ├── refund-ledger.ts          # Refund + reversal safety: idempotent refunds, sum-checked against captures, net-captured query
 │   ├── staging-drill.ts        # End-to-end staging drills: the full loop for both money milestones
