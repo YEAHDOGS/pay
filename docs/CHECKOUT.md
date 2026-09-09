@@ -110,6 +110,35 @@ session fixture (only a validated receipt), unknown event types throw
 `UNKNOWN_EVENT_TYPE`, and each event id produces exactly one effect
 (`ALREADY_HANDLED` on redispatch).
 
+## Server-side webhook verifier
+
+`lib/webhook-server.ts` is the LIVE-side counterpart to `webhook-test.ts`
+and the piece divorce's future `/api/webhooks/checkout` route will import.
+The fixture module only accepts the `whsec_test_fixture_*` dummy; this
+module only accepts a real processor secret passed explicitly (from env
+at the route — never in-repo) and refuses the fixture dummy in the other
+direction, so the two can never be confused.
+
+```ts
+import { verifyServerWebhookSignature } from "pay/lib/webhook-server";
+
+const rawBody = await request.text();              // exact bytes, un-parsed
+const ts = verifyServerWebhookSignature(           // throws on anything fishy
+  rawBody,
+  request.headers.get("stripe-signature"),
+  process.env.STRIPE_WEBHOOK_SECRET
+);
+const event = JSON.parse(rawBody);
+// → only a verified checkout.session.completed gates the packet
+```
+
+Verifies the Stripe header scheme (`t=<unix>,v1=<hex>`, multi-`v1`
+supported for secret rollovers) with HMAC-SHA256 in constant time, enforces
+a 300s freshness window (stale → `EXPIRED_EVENT`, future → `FUTURE_EVENT`),
+and throws `MISSING_SECRET` / `FIXTURE_SECRET` / `BAD_HEADER` /
+`BAD_SIGNATURE` before any event is trusted. Zero deps, zero network —
+verification is the whole job; idempotency + fulfillment stay in the route.
+
 ## How wax consumes it
 
 `lib/subscription-plans.ts` is the recurring-plan model behind the seam:

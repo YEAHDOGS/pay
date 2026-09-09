@@ -68,6 +68,7 @@ pay/
 │   ├── checkout-provider.ts    # Swappable provider seam (consume through this)
 │   ├── divorce-checkout.ts     # First consumer: divorce $30 packet
 │   ├── webhook-test.ts         # Signed webhook event fixtures (modal unlock gate)
+│   ├── webhook-server.ts       # Server-side signature verifier (Stripe scheme, no secrets in-repo)
 │   ├── webhook-handler.ts      # Dispatch skeleton: verified event → product effect
 │   ├── staging-drill.ts        # End-to-end staging drills: the full loop for both money milestones
 │   └── subscription-plans.ts   # Plan model: wax $10/mo lifecycle
