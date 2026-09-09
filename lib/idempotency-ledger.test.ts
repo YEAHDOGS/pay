@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   type IdempotencyLedger,
+  BoundedIdempotencyLedger,
   MemoryIdempotencyLedger,
   FileIdempotencyLedger,
 } from "./idempotency-ledger";
@@ -208,5 +209,147 @@ describe("handler ledger swap — default stays in-memory", () => {
     expect(ledger.has(effect.eventId)).toBe(true);
     // The effect's event id is really on disk.
     expect(readFileSync(ledger.path, "utf8")).toContain(effect.eventId);
+  });
+});
+
+describe("bounded ledger — memory stays bounded (LRU + TTL)", () => {
+  test("never exceeds maxEntries; least-recently-used evicts first", () => {
+    const ledger = new BoundedIdempotencyLedger({ maxEntries: 3, ttlSeconds: 0 });
+    ledger.add("evt_test_a");
+    ledger.add("evt_test_b");
+    ledger.add("evt_test_c");
+    expect(ledger.size).toBe(3);
+    // Touch `a` so `b` is the least-recently-used entry now.
+    expect(ledger.has("evt_test_a")).toBe(true);
+    ledger.add("evt_test_d"); // overflow: evicts exactly one id
+    expect(ledger.size).toBe(3);
+    expect(ledger.has("evt_test_b")).toBe(false); // evicted: stale, not looked up
+    expect(ledger.has("evt_test_a")).toBe(true); // touched → kept
+    expect(ledger.has("evt_test_c")).toBe(true);
+    expect(ledger.has("evt_test_d")).toBe(true);
+  });
+
+  test("duplicate adds stay one entry; garbage still rejected", () => {
+    const ledger = new BoundedIdempotencyLedger({ maxEntries: 8, ttlSeconds: 0 });
+    ledger.add("evt_test_dup");
+    ledger.add("evt_test_dup");
+    expect(ledger.size).toBe(1);
+    expect(() => ledger.add("")).toThrow();
+    expect(() => new BoundedIdempotencyLedger({ maxEntries: 0 })).toThrow();
+  });
+
+  test("TTL expiry: an id forgotten after its TTL may be recorded again", () => {
+    let now = 1_000_000;
+    const ledger = new BoundedIdempotencyLedger({
+      maxEntries: 100,
+      ttlSeconds: 60,
+      nowSeconds: () => now,
+    });
+    ledger.add("evt_test_ttl");
+    expect(ledger.has("evt_test_ttl")).toBe(true);
+    now += 61; // past the TTL
+    expect(ledger.has("evt_test_ttl")).toBe(false);
+    expect(ledger.size).toBe(0);
+    // Re-adding after expiry is not a no-op duplicate — the id is fresh.
+    ledger.add("evt_test_ttl");
+    expect(ledger.has("evt_test_ttl")).toBe(true);
+    expect(ledger.size).toBe(1);
+  });
+
+  test("constructor guards: maxEntries ≥ 1, ttlSeconds ≥ 0", () => {
+    expect(() => new BoundedIdempotencyLedger({ maxEntries: 0 })).toThrow();
+    expect(() => new BoundedIdempotencyLedger({ ttlSeconds: -1 })).toThrow();
+  });
+});
+
+describe("conflict-aware ledger — per-id content fingerprints", () => {
+  test("recordFingerprint: first write wins; mismatch is visible to the caller", () => {
+    const ledger = new BoundedIdempotencyLedger({ maxEntries: 10, ttlSeconds: 0 });
+    ledger.add("evt_test_fp");
+    expect(ledger.fingerprintFor("evt_test_fp")).toBe(undefined);
+    ledger.recordFingerprint("evt_test_fp", "fp-original");
+    expect(ledger.fingerprintFor("evt_test_fp")).toBe("fp-original");
+    // Second record does NOT overwrite — the handler compares before
+    // recording; silent overwrite would destroy the evidence.
+    ledger.recordFingerprint("evt_test_fp", "fp-forged");
+    expect(ledger.fingerprintFor("evt_test_fp")).toBe("fp-original");
+  });
+
+  test("recordFingerprint refuses unknown ids and empty fingerprints", () => {
+    const ledger = new BoundedIdempotencyLedger({ maxEntries: 10, ttlSeconds: 0 });
+    expect(() => ledger.recordFingerprint("evt_test_missing", "fp")).toThrow();
+    ledger.add("evt_test_empty");
+    expect(() => ledger.recordFingerprint("evt_test_empty", "")).toThrow();
+  });
+
+  test("fingerprint evicts with its id; expired ids report no fingerprint", () => {
+    let now = 500;
+    const ledger = new BoundedIdempotencyLedger({
+      maxEntries: 1,
+      ttlSeconds: 60,
+      nowSeconds: () => now,
+    });
+    ledger.add("evt_test_first");
+    ledger.recordFingerprint("evt_test_first", "fp-1");
+    ledger.add("evt_test_second"); // evicts `first` (capacity 1)
+    expect(ledger.fingerprintFor("evt_test_first")).toBe(undefined);
+
+    const ttl = new BoundedIdempotencyLedger({
+      maxEntries: 10,
+      ttlSeconds: 30,
+      nowSeconds: () => now,
+    });
+    ttl.add("evt_test_ttl_fp");
+    ttl.recordFingerprint("evt_test_ttl_fp", "fp-ttl");
+    now += 31;
+    expect(ttl.fingerprintFor("evt_test_ttl_fp")).toBe(undefined);
+  });
+});
+
+describe("file ledger — compact bounds the file", () => {
+  test("compact drops oldest ids, keeps newest; file rewrites cleanly", () => {
+    const path = join(scratchDir(), "compact.jsonl");
+    // Write five ids with ascending timestamps by hand (deterministic).
+    writeFileSync(
+      path,
+      ["evt_test_1", "evt_test_2", "evt_test_3", "evt_test_4", "evt_test_5"]
+        .map((id, i) => JSON.stringify({ id, ts: 1000 + i }))
+        .join("\n") + "\n",
+      "utf8"
+    );
+    const ledger = new FileIdempotencyLedger(path);
+    expect(ledger.size).toBe(5);
+    const dropped = ledger.compact(3);
+    expect(dropped).toBe(2);
+    expect(ledger.size).toBe(3);
+    expect(ledger.has("evt_test_1")).toBe(false);
+    expect(ledger.has("evt_test_2")).toBe(false);
+    expect(ledger.has("evt_test_3")).toBe(true);
+    expect(ledger.has("evt_test_4")).toBe(true);
+    expect(ledger.has("evt_test_5")).toBe(true);
+    // File on disk really is three lines now, all valid JSON-lines.
+    const lines = readFileSync(path, "utf8").trim().split("\n");
+    expect(lines.length).toBe(3);
+    expect(lines.map((l) => (JSON.parse(l) as { id: string }).id)).toEqual([
+      "evt_test_3",
+      "evt_test_4",
+      "evt_test_5",
+    ]);
+    // The ledger stays usable after compact: new adds append.
+    ledger.add("evt_test_6");
+    expect(ledger.size).toBe(4);
+    expect(ledger.has("evt_test_6")).toBe(true);
+    // Reload from disk agrees — compact persisted.
+    const reloaded = new FileIdempotencyLedger(path);
+    expect(reloaded.size).toBe(4);
+    expect(reloaded.has("evt_test_2")).toBe(false);
+  });
+
+  test("compact is a no-op when already within bounds; guards input", () => {
+    const ledger = freshFileLedger();
+    ledger.add("evt_test_only");
+    expect(ledger.compact(100)).toBe(0);
+    expect(ledger.size).toBe(1);
+    expect(() => ledger.compact(0)).toThrow();
   });
 });
