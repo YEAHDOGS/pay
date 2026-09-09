@@ -66,6 +66,12 @@
  *     storage. This module never writes the ledger itself.
  *   - Unknown event types throw UNKNOWN_EVENT_TYPE. New processor
  *     events are added by extending the dispatch switch — nothing else.
+ *   - `assertServerPaymentSettled` is the fulfill-time guard every
+ *     route must call before unlocking anything: a verified
+ *     record_payment whose payment_status isn't "paid" (or whose
+ *     paid flag disagrees) throws PAYMENT_NOT_SETTLED instead of
+ *     unlocking. Dispatch records for the audit trail; settlement
+ *     gates the deliverable.
  *   - Zero dependencies beyond node:crypto (via webhook-server).
  *     Zero network. Nothing leaves this process.
  */
@@ -94,6 +100,13 @@ export const SERVER_DISPATCH_ERROR_CODES = Object.freeze({
   EVENT_BODY_CONFLICT: "EVENT_BODY_CONFLICT",
   /** Verified event amount/currency didn't match the server's expectation. */
   AMOUNT_MISMATCH: "AMOUNT_MISMATCH",
+  /**
+   * A verified payment record that is NOT settled: payment_status is
+   * not "paid", or the paid flag disagrees with it. Thrown by
+   * `assertServerPaymentSettled` — the route must never unlock a
+   * deliverable on an unsettled payment.
+   */
+  PAYMENT_NOT_SETTLED: "PAYMENT_NOT_SETTLED",
 });
 
 /* ── Types ───────────────────────────────────────────────────────── */
@@ -449,6 +462,37 @@ export function handleServerWebhookDelivery(
 ): ServerWebhookEffect {
   const event = parseServerWebhookEvent(rawBody, header, secret, opts);
   return handleServerWebhookEvent(event, opts, bodyHashOf(rawBody));
+}
+
+/**
+ * Fail-closed settlement gate: call this on a record_payment effect's
+ * payment BEFORE unlocking anything (the printable packet, wax
+ * access, …). Dispatch records a payment for the audit trail even when
+ * the processor reports it unpaid — settlement is what gates the
+ * deliverable, and that's this function's job.
+ *
+ * Throws PAYMENT_NOT_SETTLED when:
+ *   - the input isn't a payment-shaped object at all,
+ *   - `paid` is not exactly `true`, or
+ *   - `paymentStatus` is not exactly `"paid"` (the two must agree —
+ *     a contradictory record is untrustworthy, fail closed).
+ */
+export function assertServerPaymentSettled(
+  payment: unknown
+): asserts payment is PaymentRecord {
+  const p = payment as Partial<PaymentRecord> | null;
+  const settled =
+    !!p &&
+    typeof p === "object" &&
+    p.paid === true &&
+    p.paymentStatus === "paid";
+  if (!settled) {
+    throw dispatchErr(
+      SERVER_DISPATCH_ERROR_CODES.PAYMENT_NOT_SETTLED,
+      "payment is not settled (paymentStatus must be \"paid\" and " +
+        "the paid flag must agree) — refusing to unlock the deliverable."
+    );
+  }
 }
 
 /**

@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { signServerWebhookPayload } from "./webhook-server";
 import {
   SERVER_DISPATCH_ERROR_CODES,
+  assertServerPaymentSettled,
   handleServerWebhookDelivery,
   handleServerWebhookEvent,
   parseServerWebhookEvent,
@@ -423,5 +424,54 @@ describe("server-side amount expectation (AMOUNT_MISMATCH)", () => {
     const effect = deliver(sessionBodyWith("evt_amt_none_1", 999999, "gbp"));
     expect(effect.effect).toBe("record_payment");
     expect(effect.payment.amountTotal).toBe(999999);
+  });
+});
+
+describe("assertServerPaymentSettled — the fulfill-time settlement gate", () => {
+  beforeEach(() => {
+    resetServerWebhookDispatch();
+  });
+
+  test("a settled payment (paid + payment_status 'paid') passes", () => {
+    const effect = deliver(sessionBody("evt_settled_1"));
+    expect(() => assertServerPaymentSettled(effect.payment)).not.toThrow();
+  });
+
+  test("unpaid payment_status throws PAYMENT_NOT_SETTLED", () => {
+    const body = JSON.stringify({
+      id: "evt_settled_2",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_test_123",
+          amount_total: 3000,
+          currency: "usd",
+          payment_status: "unpaid",
+        },
+      },
+    });
+    const effect = deliver(body);
+    expect(effect.payment.paid).toBe(false);
+    expect(() => assertServerPaymentSettled(effect.payment)).toThrow(
+      expect.objectContaining({ code: SERVER_DISPATCH_ERROR_CODES.PAYMENT_NOT_SETTLED })
+    );
+  });
+
+  test("paid flag disagreeing with payment_status fails closed", () => {
+    // A hand-built record that claims paid:true while the processor
+    // status says otherwise is contradictory — untrustworthy.
+    const effect = deliver(sessionBody("evt_settled_3"));
+    const contradictory = { ...effect.payment, paymentStatus: "unpaid" };
+    expect(() => assertServerPaymentSettled(contradictory)).toThrow(
+      expect.objectContaining({ code: SERVER_DISPATCH_ERROR_CODES.PAYMENT_NOT_SETTLED })
+    );
+  });
+
+  test("non-payment inputs fail closed with PAYMENT_NOT_SETTLED", () => {
+    for (const bad of [null, undefined, 42, "paid", {}, { paid: true }]) {
+      expect(() => assertServerPaymentSettled(bad)).toThrow(
+        expect.objectContaining({ code: SERVER_DISPATCH_ERROR_CODES.PAYMENT_NOT_SETTLED })
+      );
+    }
   });
 });
