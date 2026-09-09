@@ -3,6 +3,28 @@
 `lib/checkout-test.ts` is the shared YEAHDOGS checkout contract — the
 fixture implementation of the hosted-checkout flow every product consumes.
 
+## Provider seam (consume through this)
+
+`lib/checkout-provider.ts` is the interface every product should call.
+`CheckoutProvider` is the contract; `TestCheckoutProvider` is the fixture
+implementation; `getProvider()` hands it out. Live provider ids
+(`"stripe"`, `"live"`, …) throw `TEST_MODE_VIOLATION` — live rails can
+only ever arrive as a new server-side class implementing
+`CheckoutProvider`, never in this module.
+
+```js
+// one-time divorce packet — through the seam
+const provider = getProvider();
+const session = provider.createSession("uncontested_packet");
+const receipt = provider.confirmPayment(session.id, session);
+if (!isValidTestReceipt(receipt)) throw new Error("bad receipt");
+
+// wax $10/mo — through the same seam
+const subSession = provider.createSession("wax_subscription");
+const sub = provider.confirmSubscription(subSession.id, subSession);
+if (!isValidTestSubscription(sub)) throw new Error("bad subscription");
+```
+
 ## What it is
 
 A dependency-free, network-free simulation of `create session → confirm
@@ -33,6 +55,9 @@ const session = createTestCheckout("uncontested_packet");
 const receipt = confirmTestPayment(session.id, session);
 if (!isValidTestReceipt(receipt)) throw new Error("bad receipt");
 ```
+
+(Prefer the provider seam above — `getProvider().createSession(...)` —
+direct `checkout-test.ts` calls remain the fixture engine underneath.)
 
 ## How wax consumes it
 
