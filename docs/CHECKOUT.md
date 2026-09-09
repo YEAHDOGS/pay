@@ -57,6 +57,21 @@ const receipt = confirmDivorceCheckout(session); // test card 4242…
 if (!isValidTestReceipt(receipt)) throw new Error("bad receipt");
 ```
 
+The modal also needs the async half of the flow: after the customer
+pays, the processor fires a signed webhook and the server verifies the
+signature BEFORE unlocking the printable packet. `lib/webhook-test.ts`
+is the fixture version of that — same shape the live server-side rail
+will verify against:
+
+```js
+const { rawBody, signature } = deliverTestWebhookEvent(
+  "checkout.session.completed", receipt);
+const event = parseTestWebhookEvent(rawBody, signature); // BAD_SIGNATURE /
+//   EXPIRED_EVENT / REPLAYED_EVENT all throw — never trust an unverified event
+if (!isValidTestReceipt(event.data.object)) throw new Error("bad receipt");
+// → unlock printable packet
+```
+
 divorce's staging flow already proves this pattern with
 `src/lib/stripe-test.js`: questionnaire → checkout modal → receipt →
 printable packet. To migrate to the shared contract:

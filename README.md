@@ -67,6 +67,7 @@ pay/
 │   ├── checkout-test.ts        # Test-mode fixture contract (zero deps)
 │   ├── checkout-provider.ts    # Swappable provider seam (consume through this)
 │   ├── divorce-checkout.ts     # First consumer: divorce $30 packet
+│   ├── webhook-test.ts         # Signed webhook event fixtures (modal unlock gate)
 │   └── subscription-plans.ts   # Plan model: wax $10/mo lifecycle
 ├── README.md
 ├── LICENSE                     # MIT
