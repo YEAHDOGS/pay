@@ -64,6 +64,12 @@ import {
   describePlan,
 } from "./subscription-plans";
 
+import {
+  type IdempotencyLedger,
+  MemoryIdempotencyLedger,
+  FileIdempotencyLedger,
+} from "./idempotency-ledger";
+
 /* ── Hoisted constants ───────────────────────────────────────────── */
 
 export const HANDLER_ERROR_CODES = Object.freeze({
@@ -147,9 +153,42 @@ function effect(
 
 /* ── Handler-level idempotency ledger ────────────────────────────── */
 
-/** Event ids already dispatched to an effect (defense in depth:
- *  parseTestWebhookEvent already rejects replays at the gate). */
-const handledEventIds = new Set<string>();
+/**
+ * Event ids already dispatched to an effect (defense in depth:
+ * parseTestWebhookEvent already rejects replays at the gate).
+ *
+ * The default ledger is in-memory — drills and tests reset it freely.
+ * A LIVE staging route must persist keys across restarts: swap in a
+ * file-backed adapter (same interface) before handling traffic:
+ *
+ *   setHandlerLedger(new FileIdempotencyLedger("/var/lib/staging/webhook-ids.jsonl"));
+ *
+ * The parse-level replay ledger (`seenEventIds` in webhook-test) has
+ * the same constraint — swap it the same way when the route goes live.
+ */
+let handlerLedger: IdempotencyLedger = new MemoryIdempotencyLedger();
+
+/**
+ * Swap the handler idempotency ledger. Pass a `FileIdempotencyLedger`
+ * (or any `IdempotencyLedger`) for a live staging route; the drills
+ * and tests keep the in-memory default.
+ */
+export function setHandlerLedger(ledger: IdempotencyLedger): void {
+  if (!ledger || typeof ledger.has !== "function" || typeof ledger.add !== "function") {
+    throw handlerErr(
+      HANDLER_ERROR_CODES.INVALID_OBJECT,
+      "setHandlerLedger needs an IdempotencyLedger (has/add/clear/size)."
+    );
+  }
+  handlerLedger = ledger;
+}
+
+/** The currently installed handler ledger (drill default: in-memory). */
+export function getHandlerLedger(): IdempotencyLedger {
+  return handlerLedger;
+}
+
+export { FileIdempotencyLedger };
 
 /* ── Dispatch ────────────────────────────────────────────────────── */
 
@@ -170,7 +209,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
       "refusing to dispatch an event that is not a verified test-mode fixture."
     );
   }
-  if (handledEventIds.has(event.id)) {
+  if (handlerLedger.has(event.id)) {
     throw handlerErr(
       HANDLER_ERROR_CODES.ALREADY_HANDLED,
       `event ${event.id} already produced an effect — refusing redispatch.`
@@ -187,7 +226,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           `checkout.session.completed carried no valid receipt — never unlocking on a ${obj && typeof obj === "object" ? "non-receipt" : "missing"} payload.`
         );
       }
-      handledEventIds.add(event.id);
+      handlerLedger.add(event.id);
       return effect(event, "unlock_deliverable", obj);
     }
     case "payment_intent.succeeded": {
@@ -197,7 +236,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           "payment_intent.succeeded carried no valid receipt."
         );
       }
-      handledEventIds.add(event.id);
+      handlerLedger.add(event.id);
       return effect(event, "record_payment", obj);
     }
     case "customer.subscription.created": {
@@ -207,7 +246,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           "customer.subscription.created carried no valid active subscription."
         );
       }
-      handledEventIds.add(event.id);
+      handlerLedger.add(event.id);
       return effect(event, "provision_subscription", obj);
     }
     case "customer.subscription.updated": {
@@ -217,7 +256,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           "customer.subscription.updated carried no valid active subscription."
         );
       }
-      handledEventIds.add(event.id);
+      handlerLedger.add(event.id);
       return effect(event, "sync_subscription", obj);
     }
     case "customer.subscription.canceled": {
@@ -231,7 +270,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
       const accessUntil = plan.keepAccessToPeriodEnd
         ? new Date(new Date(obj.startedAt).getTime() + MONTH_MILLIS).toISOString()
         : new Date().toISOString();
-      handledEventIds.add(event.id);
+      handlerLedger.add(event.id);
       return effect(event, "grant_access_to_period_end", obj, accessUntil);
     }
     default: {
@@ -272,7 +311,7 @@ export function handleTestWebhookDelivery(
  * is reset separately via `resetWebhookFixtures()`.
  */
 export function resetWebhookHandler(): void {
-  handledEventIds.clear();
+  handlerLedger.clear();
 }
 
 export { ERROR_CODES };
