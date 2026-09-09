@@ -75,9 +75,12 @@ export const WEBHOOK_ERROR_CODES = Object.freeze({
 export type WebhookEventType =
   | "checkout.session.completed"
   | "payment_intent.succeeded"
+  | "charge.refunded"
   | "customer.subscription.created"
   | "customer.subscription.updated"
   | "customer.subscription.canceled";
+
+import type { TestRefund } from "./refund-ledger";
 
 export interface TestWebhookEvent {
   readonly id: string;
@@ -86,7 +89,7 @@ export interface TestWebhookEvent {
   /** Unix seconds. */
   readonly created: number;
   readonly data: {
-    readonly object: Receipt | Subscription | CheckoutSession;
+    readonly object: Receipt | Subscription | CheckoutSession | TestRefund;
   };
 }
 
@@ -159,7 +162,7 @@ export function testEventId(
  */
 export function deliverTestWebhookEvent(
   type: WebhookEventType,
-  object: Receipt | Subscription | CheckoutSession,
+  object: Receipt | Subscription | CheckoutSession | TestRefund,
   opts: { created?: number; secret?: string } = {}
 ): DeliveredTestWebhook {
   const secret = opts.secret ?? TEST_WEBHOOK_SECRET;

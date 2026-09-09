@@ -50,6 +50,13 @@
  *     exactly one effect regardless of arrival order; the ledger has
  *     no ordering assumption, so a retry storm arriving late cannot
  *     double-earn anything.
+ *   - Refund safety: `charge.refunded` dispatches through the refund
+ *     ledger (lib/refund-ledger.ts). Refunds are idempotent by refund
+ *     id — a refund re-emitted under a NEW event id still dedupes and
+ *     can never double-apply. Cumulative refunds are sum-checked
+ *     against the original capture (over-refunds throw OVER_REFUND),
+ *     and a refund with no capture throws REFUND_BEFORE_CAPTURE — a
+ *     reversal is always linked to the payment it reverses.
  *   - Every delivery leaves an audit line (webhook.received /
  *     effect.produced / delivery.rejected) in the swappable audit
  *     log — the ledger keeps exactly-once, the audit trail keeps
@@ -88,6 +95,16 @@ import {
 } from "./idempotency-ledger";
 
 import {
+  type RefundLedger,
+  type RefundLedgerEntry,
+  REFUND_ERROR_CODES,
+  applyRefundLedgerEntry,
+  emptyRefundLedger,
+  isValidTestRefund,
+  type TestRefund,
+} from "./refund-ledger";
+
+import {
   AUDIT_EVENT_KINDS,
   type AuditEventKind,
   type AuditFields,
@@ -120,12 +137,13 @@ export interface WebhookEffect {
   readonly effect:
     | "unlock_deliverable"
     | "record_payment"
+    | "record_refund"
     | "provision_subscription"
     | "sync_subscription"
     | "grant_access_to_period_end";
   readonly eventId: string;
   readonly eventType: string;
-  readonly object: Receipt | Subscription;
+  readonly object: Receipt | Subscription | TestRefund;
   /** Cancel events only: access runs until this ISO timestamp. */
   readonly accessUntil?: string;
   readonly testMode: true;
@@ -171,7 +189,7 @@ function isSubscriptionFixture(obj: unknown): obj is Subscription {
 function effect(
   event: TestWebhookEvent,
   effectName: WebhookEffect["effect"],
-  object: Receipt | Subscription,
+  object: Receipt | Subscription | TestRefund,
   accessUntil?: string
 ): WebhookEffect {
   return {
@@ -277,6 +295,78 @@ export function getAuditLog(): AuditLog {
 }
 
 export { FileAuditLog };
+
+/* ── Refund ledger (the money guard rail) ────────────────────────── */
+
+/**
+ * The handler's refund ledger (lib/refund-ledger.ts): captures earned
+ * by `record_payment` / `unlock_deliverable` effects, reversals earned
+ * by `charge.refunded`. Every refund is idempotent by its own refund
+ * id, sum-checked against its capture, and linked to the original
+ * payment id.
+ *
+ * Swap with `setRefundLedger` for a live staging route (the immutable
+ * ledger value persists wherever the route journals state); drills
+ * and tests keep the in-memory default. `resetWebhookHandler` clears
+ * it back to empty.
+ */
+let refundLedger: RefundLedger = emptyRefundLedger();
+
+/** Swap the refund ledger. Live routes persist the ledger value. */
+export function setRefundLedger(ledger: RefundLedger): void {
+  if (!ledger || typeof ledger !== "object" || !Array.isArray(ledger.entries)) {
+    throw handlerErr(
+      HANDLER_ERROR_CODES.INVALID_OBJECT,
+      "setRefundLedger needs a RefundLedger ({entries, testMode: true})."
+    );
+  }
+  // Validate shape cheaply by touching it: a poisoned ledger must
+  // never silently become the money guard.
+  for (const e of ledger.entries) {
+    if (!e || typeof e !== "object") {
+      throw handlerErr(
+        HANDLER_ERROR_CODES.INVALID_OBJECT,
+        "setRefundLedger: ledger contains a malformed entry."
+      );
+    }
+  }
+  refundLedger = ledger;
+}
+
+/** The currently installed refund ledger (drill default: empty). */
+export function getRefundLedger(): RefundLedger {
+  return refundLedger;
+}
+
+/**
+ * Record the capture a payment effect earned in the refund ledger, so
+ * later `charge.refunded` events have something to sum against. A
+ * payment captures ONCE: if the same receipt id was already captured
+ * (e.g. both checkout.session.completed and payment_intent.succeeded
+ * fired for it), the duplicate is swallowed — exactly-once MONEY, not
+ * exactly-once events. Any other ledger error propagates.
+ */
+function recordPaymentCapture(
+  event: TestWebhookEvent,
+  receipt: Receipt
+): void {
+  const entry: RefundLedgerEntry = {
+    kind: "capture",
+    paymentId: receipt.id,
+    amountCents: receipt.amountCents,
+    currency: receipt.currency,
+    eventId: event.id,
+  };
+  try {
+    const result = applyRefundLedgerEntry(refundLedger, entry);
+    refundLedger = result.ledger;
+  } catch (e) {
+    if ((e as { code?: string }).code === REFUND_ERROR_CODES.DUPLICATE_REFUND) {
+      return; // already captured — the effect still goes out once.
+    }
+    throw e;
+  }
+}
 
 /**
  * Record an audit milestone. Best-effort BY DESIGN: a failing adapter
@@ -394,6 +484,7 @@ export function handleTestWebhookEvent(
           `checkout.session.completed carried no valid receipt — never unlocking on a ${obj && typeof obj === "object" ? "non-receipt" : "missing"} payload.`
         );
       }
+      recordPaymentCapture(event, obj as Receipt);
       commitEffect(event, "unlock_deliverable", opts.payloadFingerprint);
       return effect(event, "unlock_deliverable", obj);
     }
@@ -404,8 +495,42 @@ export function handleTestWebhookEvent(
           "payment_intent.succeeded carried no valid receipt."
         );
       }
+      recordPaymentCapture(event, obj as Receipt);
       commitEffect(event, "record_payment", opts.payloadFingerprint);
       return effect(event, "record_payment", obj);
+    }
+    case "charge.refunded": {
+      // Refund safety: the refund id is the idempotency key (a
+      // re-emitted refund under a NEW event id still dedupes), and the
+      // ledger sum-checks the reversal against the original capture.
+      if (!isValidTestRefund(obj)) {
+        throw handlerErr(
+          HANDLER_ERROR_CODES.INVALID_OBJECT,
+          "charge.refunded carried no valid refund fixture."
+        );
+      }
+      const reversal: RefundLedgerEntry = {
+        kind: "refund",
+        refundId: obj.id,
+        paymentId: obj.paymentId,
+        amountCents: obj.amountCents,
+        currency: obj.currency,
+        eventId: event.id,
+      };
+      // Guard failures (REFUND_BEFORE_CAPTURE / OVER_REFUND /
+      // CURRENCY_MISMATCH) surface with their own codes via the outer
+      // audit + rethrow — the event id is NOT marked handled, so a
+      // corrected retry can still land.
+      const result = applyRefundLedgerEntry(refundLedger, reversal);
+      refundLedger = result.ledger;
+      if (!result.applied) {
+        throw handlerErr(
+          HANDLER_ERROR_CODES.ALREADY_HANDLED,
+          `refund ${obj.id} already applied to ${obj.paymentId} — refusing redispatch.`
+        );
+      }
+      commitEffect(event, "record_refund", opts.payloadFingerprint);
+      return effect(event, "record_refund", obj);
     }
     case "customer.subscription.created": {
       if (!isValidTestSubscription(obj)) {
@@ -508,11 +633,13 @@ export function handleTestWebhookDelivery(
 }
 
 /**
- * Reset the handler ledger AND the audit log. For tests only — the
- * parse replay ledger is reset separately via `resetWebhookFixtures()`.
+ * Reset the handler ledger, the refund ledger, AND the audit log. For
+ * tests only — the parse replay ledger is reset separately via
+ * `resetWebhookFixtures()`.
  */
 export function resetWebhookHandler(): void {
   handlerLedger.clear();
+  refundLedger = emptyRefundLedger();
   auditLog.clear();
 }
 
