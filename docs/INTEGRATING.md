@@ -157,6 +157,23 @@ function fulfillFromWebhook(rawBody: string, signature: string) {
    `delivery.rejected` line for staging forensics. Records carry ids,
    event types, effect names, and error codes only — no payloads, no
    secrets, no PII — and a failing adapter can never block an effect.
+
+   **Idempotency contract (both layers are now bounded):**
+   - The default dedupe stores are `BoundedIdempotencyLedger` — capped
+     at 50,000 ids with LRU eviction and a 30-day TTL, so a retry storm
+     can't turn dedupe into a memory leak. `FileIdempotencyLedger` gets
+     the same bound via `ledger.compact(n)` (call it from a maintenance
+     loop, never on the request path).
+   - **Duplicates are acknowledged, never re-processed:** the same
+     event delivered twice throws `ALREADY_HANDLED` after verify — the
+     effect is produced exactly once.
+   - **Out-of-order delivery is safe:** each event id earns its effect
+     independently of arrival order; late retries can't double-earn.
+   - **Same id, different bytes is a conflict, not a duplicate:** the
+     handler fingerprints the raw signed body (sha256) when an effect
+     is first produced. A replay of a consumed id with different bytes
+     throws `PAYLOAD_CONFLICT` — treat it as a possible forgery or
+     split-brain retry and investigate before retrying anything.
 4. **Non-fixture events** — anything missing `testMode: true` or an
    `evt_test_*` id throws `BAD_EVENT`.
 
