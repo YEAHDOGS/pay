@@ -151,6 +151,12 @@ function fulfillFromWebhook(rawBody: string, signature: string) {
    FileIdempotencyLedger(path))` in `lib/idempotency-ledger.ts` (crash-
    safe JSON-lines appends, corrupt-line tolerant, keys survive
    restarts). The drills keep the in-memory default deliberately.
+   Same story for the audit trail: `setAuditLog(new
+   FileAuditLog(path))` in `lib/audit-log.ts` — every delivery then
+   leaves a persistent `webhook.received` / `effect.produced` /
+   `delivery.rejected` line for staging forensics. Records carry ids,
+   event types, effect names, and error codes only — no payloads, no
+   secrets, no PII — and a failing adapter can never block an effect.
 4. **Non-fixture events** — anything missing `testMode: true` or an
    `evt_test_*` id throws `BAD_EVENT`.
 
