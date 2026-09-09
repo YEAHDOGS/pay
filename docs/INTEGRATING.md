@@ -265,12 +265,49 @@ lines, which are reported, never matched. A live route journals its
 effects and reconciles against the real statement on a schedule;
 here it is a pure function, so the drill is deterministic.
 
+## 9. Refunds + reversals (the money guard rail)
+
+`lib/refund-ledger.ts` + the handler's `charge.refunded` dispatch are
+the refund contract. Test-mode only, fixtures only — same rules as
+everything else here.
+
+**The flow.** A `charge.refunded` event carries a refund fixture
+(`rfnd_test_*`, linked to the original `rcpt_test_*` payment). The
+handler validates it (`isValidTestRefund`), then applies it to the
+refund ledger. The ledger appends one **reversal entry** carrying the
+original `paymentId` — the full money-movement history reads per
+payment. The produced effect is `record_refund`.
+
+**Idempotency is by refund id, not just event id.** The event-id
+dedupe catches an exact redelivery (`ALREADY_HANDLED`); the refund
+ledger catches the sneakier case — the processor re-emitting the SAME
+refund under a NEW event id (split-brain retry). A replayed refund id
+is a no-op that returns the ledger unchanged, so it can never
+double-apply.
+
+**Refunds are sum-checked against the capture.** Every payment effect
+(`record_payment` / `unlock_deliverable`) records a capture in the
+refund ledger automatically (exactly-once money: a payment captures
+once, even if both events fire). Cumulative refunds can never exceed
+the capture — an over-refund throws `OVER_REFUND` and the ledger is
+unchanged. A refund with no capture throws `REFUND_BEFORE_CAPTURE`;
+a cross-currency refund throws `CURRENCY_MISMATCH`. Amounts are
+integer cents, never floats.
+
+**Queries.** `netCaptured(ledger, paymentId)` is captured minus all
+refunds for that payment (0 for unknown payments); `totalRefunded`
+and `refundsFor` give the reversal history. Swap the ledger for a
+live route with `setRefundLedger()` / `getRefundLedger()`; drills and
+tests reset it via `resetWebhookHandler()`.
+
 ## Checklist before you call the money milestone done
 
 - [ ] Session created through `getProvider()` / `startDivorceCheckout()`
 - [ ] Deliverable unlocks ONLY after `parseTestWebhookEvent` succeeds AND
       `isValidTestReceipt` passes — never from the receipt alone
 - [ ] Replay (`REPLAYED_EVENT`) and expiry (`EXPIRED_EVENT`) paths tested
+- [ ] Refund paths tested: redelivered refund never double-applies,
+      over-refund refused, refund-before-capture refused
 - [ ] No keys, tokens, or card numbers in client code or git history
 - [ ] `bun test` in `pay/` is green before you commit
 - [ ] Ran the money-milestone drills as the loop reference:

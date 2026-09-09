@@ -71,6 +71,7 @@ pay/
 │   ├── webhook-receipt.ts      # HTTP-shaped front door: missing-signature + oversize-body rejection before verify
 │   ├── webhook-handler.ts      # Dispatch skeleton: verified event → product effect
 │   ├── reconcile.ts            # Settlement drill: produced effects vs provider statement fixture
+│   ├── refund-ledger.ts          # Refund + reversal safety: idempotent refunds, sum-checked against captures, net-captured query
 │   ├── staging-drill.ts        # End-to-end staging drills: the full loop for both money milestones
 │   └── subscription-plans.ts   # Plan model: wax $10/mo lifecycle
 ├── README.md
