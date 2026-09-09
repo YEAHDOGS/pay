@@ -57,15 +57,61 @@ page — the wallet, identity, and transport layers are not implemented.
 
 ```
 pay/
-├── app/                 # Next.js app router (landing page placeholder)
+├── app/                        # Next.js app router (landing page placeholder)
 ├── docs/
-│   ├── ARCHITECTURE.md  # System design, data flow, layer breakdown
-│   ├── ROADMAP.md       # Phased build plan (v0.1 → v1.0)
-│   └── SECURITY.md      # Threat model, key management, known risks
+│   ├── ARCHITECTURE.md         # System design, data flow, layer breakdown
+│   ├── CHECKOUT.md             # Shared checkout contract (test-mode fixtures)
+│   ├── ROADMAP.md              # Phased build plan (v0.1 → v1.0)
+│   └── SECURITY.md             # Threat model, key management, known risks
+├── lib/
+│   ├── checkout-test.ts        # Test-mode fixture contract (zero deps)
+│   ├── checkout-provider.ts    # Swappable provider seam (consume through this)
+│   ├── divorce-checkout.ts     # First consumer: divorce $30 packet
+│   └── subscription-plans.ts   # Plan model: wax $10/mo lifecycle
 ├── README.md
-├── LICENSE              # MIT
+├── LICENSE                     # MIT
 └── .gitignore
 ```
+
+## Integration recipe — plugging a site into checkout
+
+> **Test mode only.** These fixtures move no real money. When Brandon approves
+> a live rail, it lands as a **server-side** `CheckoutProvider` class and
+> product code keeps calling `getProvider()` — same shape, zero key material
+> in any site.
+
+Consume checkout through the seam in `lib/checkout-provider.ts` — never
+through `checkout-test.ts` directly. The product's own UI (modals, forms,
+packet rendering) stays in the product repo; only the money step lives here.
+
+```ts
+import { getProvider, isValidTestReceipt } from "./lib/checkout-provider";
+
+// divorce: $30 one-time uncontested packet (see lib/divorce-checkout.ts)
+const provider = getProvider(); // always the "test-fixture" provider
+const session = provider.createSession("uncontested_packet");
+const receipt = provider.confirmPayment(session.id, session); // test card 4242…
+if (!isValidTestReceipt(receipt)) throw new Error("bad receipt"); // never unlock on a bad receipt
+```
+
+```ts
+import { getProvider } from "./lib/checkout-provider";
+import { isValidTestSubscription } from "./lib/subscription-plans";
+
+// wax: $10/mo drop-alert subscription (see lib/subscription-plans.ts)
+const { plan, subscription } = startWaxSubscription();
+if (!isValidTestSubscription(subscription)) throw new Error("bad subscription");
+```
+
+Migration path for an existing site (divorce's `stripe-test.js` flow):
+
+1. Swap `createTestPaymentIntent` → `provider.createSession("uncontested_packet")`.
+2. Swap `confirmTestPayment` → `provider.confirmPayment(session.id, session)`.
+3. Keep the receipt gate: only a valid receipt unlocks the printable packet.
+4. When a live rail is approved, point `getProvider()` at the new
+   server-side implementation — the call sites do not change.
+
+Run the fixture tests with `bun test lib/` (zero installs, zero network).
 
 ## Contributing
 
