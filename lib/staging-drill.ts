@@ -35,7 +35,10 @@
  *     before each run: `resetWebhookFixtures()` /
  *     `resetWebhookHandler()`. Isolation for a test harness — a live
  *     server must persist idempotency keys itself; this module never
- *     pretends its in-memory Sets survive a restart.
+ *     pretends its in-memory Sets survive a restart. A live route
+ *     swaps in `FileIdempotencyLedger` from lib/idempotency-ledger.ts
+ *     (same interface, crash-safe JSON-lines, load on boot) via
+ *     `setHandlerLedger` — see docs/INTEGRATING.md step 5.
  *   - The deliverable never unlocks from the receipt alone: drills go
  *     through the signed webhook + verify path even though the fixture
  *     confirm is in-process. Same shape the modal/server uses live.
