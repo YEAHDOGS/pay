@@ -171,6 +171,52 @@ export function buildTestStatement(
   return { id, entries: normalized, testMode: true };
 }
 
+/* ── Alert formatting ───────────────────────────────────────────── */
+
+/**
+ * Turn a ReconcileReport into a pager-ready alert string. Balanced
+ * reports get one OK line; unbalanced reports name every discrepancy
+ * category with counts and event ids, so the on-call engineer can
+ * act without re-running the drill. Pure: same report, same string.
+ *
+ *   const report = reconcileTestSettlement({ localEffects, statement });
+ *   if (!report.balanced) pageSomeone(formatReconcileAlert(report));
+ */
+export function formatReconcileAlert(report: ReconcileReport): string {
+  if (report.balanced) {
+    return (
+      `reconcile ${report.statementId}: BALANCED ` +
+      `(${report.matched.length} matched, ${report.refunded.length} refunded)`
+    );
+  }
+  const lines = [`reconcile ${report.statementId}: UNBALANCED`];
+  if (report.missing.length > 0) {
+    // Settled on the provider's books, never fulfilled locally:
+    // the customer paid and the product never unlocked.
+    lines.push(
+      `missing (${report.missing.length}): ${report.missing.join(", ")}`
+    );
+  }
+  if (report.extra.length > 0) {
+    // Fulfilled locally, never settled: the product unlocked and no
+    // money arrived. A refunded line whose fulfillment still stands
+    // surfaces here too — a human decision, never silent.
+    lines.push(`extra (${report.extra.length}): ${report.extra.join(", ")}`);
+  }
+  for (const m of report.amountMismatch) {
+    lines.push(
+      `amountMismatch ${m.eventId}: local ${m.localAmountCents} ${m.localCurrency} ` +
+        `vs statement ${m.statementAmountCents} ${m.statementCurrency}`
+    );
+  }
+  if (report.refunded.length > 0) {
+    lines.push(
+      `refunded (info, ${report.refunded.length}): ${report.refunded.join(", ")}`
+    );
+  }
+  return lines.join("\n");
+}
+
 /* ── Validation ──────────────────────────────────────────────────── */
 
 function assertEventId(id: unknown, where: string, code: string): asserts id is string {

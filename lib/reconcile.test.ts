@@ -19,6 +19,7 @@ import {
 import {
   RECONCILE_ERROR_CODES,
   buildTestStatement,
+  formatReconcileAlert,
   localEffectFromWebhookEffect,
   reconcileTestSettlement,
   type LocalEffectRecord,
@@ -194,5 +195,64 @@ describe("reconcileTestSettlement — poisoned inputs", () => {
     expect(() =>
       localEffectFromWebhookEffect({ eventId: "nope" } as never)
     ).toThrow(expect.objectContaining({ code: RECONCILE_ERROR_CODES.BAD_LOCAL }));
+  });
+});
+
+describe("formatReconcileAlert — pager-ready report strings", () => {
+  test("a balanced report renders one OK line", () => {
+    const local = [localOf(divorceEffect()), localOf(waxEffect())];
+    const statement = buildTestStatement(
+      local.map((r) => ({
+        eventId: r.eventId,
+        amountCents: r.amountCents,
+        currency: r.currency,
+      }))
+    );
+    const report = reconcileTestSettlement({ localEffects: local, statement });
+    const alert = formatReconcileAlert(report);
+    expect(alert).toContain(report.statementId);
+    expect(alert).toContain("BALANCED");
+    expect(alert).toContain("2 matched");
+    expect(alert.split("\n")).toHaveLength(1);
+  });
+
+  test("an unbalanced report names every discrepancy category", () => {
+    const local = [localOf(divorceEffect()), localOf(waxEffect())];
+    const statement = buildTestStatement([
+      // divorce: a cent short — amountMismatch; wax: not settled — extra.
+      { eventId: local[0].eventId, amountCents: 2999 },
+      { eventId: "evt_test_planted_missing_0001", amountCents: 500 }, // missing
+    ]);
+    const report = reconcileTestSettlement({ localEffects: local, statement });
+    const alert = formatReconcileAlert(report);
+    expect(alert).toContain("UNBALANCED");
+    expect(alert).toContain("missing (1): evt_test_planted_missing_0001");
+    expect(alert).toContain(`extra (1): ${local[1].eventId}`);
+    expect(alert).toContain(
+      `amountMismatch ${local[0].eventId}: local 3000 usd vs statement 2999 usd`
+    );
+  });
+
+  test("refunded lines ride along as info, never as discrepancies", () => {
+    const local = [localOf(divorceEffect())];
+    const statement = buildTestStatement([
+      { eventId: local[0].eventId, amountCents: 3000, status: "refunded" },
+    ]);
+    const report = reconcileTestSettlement({ localEffects: local, statement });
+    const alert = formatReconcileAlert(report);
+    expect(alert).toContain(`refunded (info, 1): ${local[0].eventId}`);
+    // The refunded event surfaces under extra as a human decision…
+    expect(alert).toContain(`extra (1): ${local[0].eventId}`);
+    // …but no amountMismatch line may claim it.
+    expect(alert).not.toContain("amountMismatch");
+  });
+
+  test("deterministic: same report, same string", () => {
+    const local = [localOf(divorceEffect())];
+    const statement = buildTestStatement([
+      { eventId: local[0].eventId, amountCents: 3000 },
+    ]);
+    const report = reconcileTestSettlement({ localEffects: local, statement });
+    expect(formatReconcileAlert(report)).toBe(formatReconcileAlert(report));
   });
 });
