@@ -214,3 +214,22 @@ describe("fixture shape pinning", () => {
     expect(rawBody).toContain(`"id":"${session.id}"`);
   });
 });
+
+describe("parse-level replay ledger — bounded", () => {
+  test("replay rejection survives the bounded-ledger swap", () => {
+    const session = createTestCheckout("uncontested_packet");
+    const { rawBody, signature } = deliverTestWebhookEvent(
+      "checkout.session.completed",
+      session
+    );
+    parseTestWebhookEvent(rawBody, signature);
+    expect(() => parseTestWebhookEvent(rawBody, signature)).toThrow(
+      expect.objectContaining({ code: WEBHOOK_ERROR_CODES.REPLAYED_EVENT })
+    );
+    // Reset still clears the gate — the harness keeps isolation.
+    resetWebhookFixtures();
+    expect(() =>
+      parseTestWebhookEvent(rawBody, signature)
+    ).not.toThrow();
+  });
+});

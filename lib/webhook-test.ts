@@ -38,6 +38,10 @@
  */
 
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import {
+  BOUNDED_LEDGER_DEFAULTS,
+  BoundedIdempotencyLedger,
+} from "./idempotency-ledger";
 import type {
   CheckoutSession,
   Receipt,
@@ -117,8 +121,18 @@ export function assertFixtureSecret(secret: string): void {
   }
 }
 
-/** Event ids the parser has already accepted — the replay ledger. */
-const seenEventIds = new Set<string>();
+/**
+ * Parse-level replay ledger: event ids the parser has already accepted.
+ * Bounded (LRU + TTL) — the raw Set it replaced was an unbounded
+ * memory leak on a long-lived server. An id evicted here is NOT a
+ * security hole: a replay that slips past this gate still fails
+ * freshness verification (EXPIRED_EVENT) or hits the handler's
+ * exactly-once ledger (ALREADY_HANDLED / PAYLOAD_CONFLICT).
+ */
+const seenEventIds = new BoundedIdempotencyLedger({
+  maxEntries: BOUNDED_LEDGER_DEFAULTS.MAX_ENTRIES,
+  ttlSeconds: 3600, // 1h — far past the 300s freshness window
+});
 
 /**
  * Deterministic event id: `evt_test_` + 24 hex chars derived from the
