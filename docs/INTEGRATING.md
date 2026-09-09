@@ -143,7 +143,12 @@ function fulfillFromWebhook(rawBody: string, signature: string) {
    payloads and wrong secrets throw `BAD_SIGNATURE`. A live-looking
    secret is refused outright (`assertFixtureSecret`).
 2. **Stale events** — `|now - created| > 300s` throws `EXPIRED_EVENT`.
-3. **Replays** — an already-accepted `evt_test_*` id throws
+3. **Signature/body timestamp agreement** — the signature header's
+   `t=` is part of the signed payload, but nothing forces it to agree
+   with the body's `created`; disagreement means a hand-forged
+   signature and throws `TIMESTAMP_MISMATCH` before freshness is
+   measured against the wrong clock.
+4. **Replays** — an already-accepted `evt_test_*` id throws
    `REPLAYED_EVENT` (module-level ledger; `resetWebhookFixtures()` in
    tests only). The handler layer has its own defense-in-depth ledger
    (`ALREADY_HANDLED`). **Going live: swap both in-memory ledgers for
@@ -174,7 +179,7 @@ function fulfillFromWebhook(rawBody: string, signature: string) {
      is first produced. A replay of a consumed id with different bytes
      throws `PAYLOAD_CONFLICT` — treat it as a possible forgery or
      split-brain retry and investigate before retrying anything.
-4. **Non-fixture events** — anything missing `testMode: true` or an
+5. **Non-fixture events** — anything missing `testMode: true` or an
    `evt_test_*` id throws `BAD_EVENT`.
 
 ## 6. Svelte wiring sketch
