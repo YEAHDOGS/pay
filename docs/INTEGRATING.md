@@ -145,7 +145,12 @@ function fulfillFromWebhook(rawBody: string, signature: string) {
 2. **Stale events** — `|now - created| > 300s` throws `EXPIRED_EVENT`.
 3. **Replays** — an already-accepted `evt_test_*` id throws
    `REPLAYED_EVENT` (module-level ledger; `resetWebhookFixtures()` in
-   tests only).
+   tests only). The handler layer has its own defense-in-depth ledger
+   (`ALREADY_HANDLED`). **Going live: swap both in-memory ledgers for
+   the file-backed adapter — `setHandlerLedger(new
+   FileIdempotencyLedger(path))` in `lib/idempotency-ledger.ts` (crash-
+   safe JSON-lines appends, corrupt-line tolerant, keys survive
+   restarts). The drills keep the in-memory default deliberately.
 4. **Non-fixture events** — anything missing `testMode: true` or an
    `evt_test_*` id throws `BAD_EVENT`.
 
