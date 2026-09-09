@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   type IdempotencyLedger,
+  BOUNDED_LEDGER_DEFAULTS,
   BoundedIdempotencyLedger,
   MemoryIdempotencyLedger,
   FileIdempotencyLedger,
@@ -34,9 +35,9 @@ function scratchDir(): string {
   return scratch;
 }
 afterEach(() => {
-  // Never leak a file ledger into the other suites: drills and the
-  // webhook tests expect the in-memory default.
-  setHandlerLedger(new MemoryIdempotencyLedger());
+  // Never leak a swapped ledger into the other suites: drills and the
+  // webhook tests expect the bounded in-memory default.
+  setHandlerLedger(new BoundedIdempotencyLedger());
   resetStagingDrill();
   if (scratch) {
     rmSync(scratch, { recursive: true, force: true });
@@ -189,9 +190,10 @@ describe("file ledger — concurrent duplicate delivery is single-effect", () =>
   });
 });
 
-describe("handler ledger swap — default stays in-memory", () => {
-  test("default ledger is in-memory; swap is explicit", () => {
-    expect(getHandlerLedger()).toBeInstanceOf(MemoryIdempotencyLedger);
+describe("handler ledger swap — default stays bounded in-memory", () => {
+  test("default ledger is bounded in-memory; swap is explicit", () => {
+    expect(getHandlerLedger()).toBeInstanceOf(BoundedIdempotencyLedger);
+    expect(BOUNDED_LEDGER_DEFAULTS.MAX_ENTRIES).toBeGreaterThan(0);
   });
 
   test("setHandlerLedger rejects garbage", () => {

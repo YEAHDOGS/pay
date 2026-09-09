@@ -41,7 +41,15 @@
  *     (payment not yet confirmed in-fixture) yields no unlock — only
  *     a validated receipt does.
  *   - Handler-level idempotency: each verified event id produces
- *     exactly one effect; redelivery throws ALREADY_HANDLED.
+ *     exactly one effect. An identical redelivery throws
+ *     ALREADY_HANDLED (acknowledged, never re-processed); a redelivery
+ *     of the same id with DIFFERENT bytes throws PAYLOAD_CONFLICT.
+ *     The dedupe store is bounded (LRU eviction + TTL) — it cannot
+ *     grow without limit.
+ *   - Out-of-order events settle independently: each event id earns
+ *     exactly one effect regardless of arrival order; the ledger has
+ *     no ordering assumption, so a retry storm arriving late cannot
+ *     double-earn anything.
  *   - Every delivery leaves an audit line (webhook.received /
  *     effect.produced / delivery.rejected) in the swappable audit
  *     log — the ledger keeps exactly-once, the audit trail keeps
@@ -62,6 +70,7 @@ import {
 } from "./checkout-test";
 import {
   type TestWebhookEvent,
+  fixtureSha256,
   parseTestWebhookEvent,
 } from "./webhook-test";
 import {
@@ -71,6 +80,9 @@ import {
 
 import {
   type IdempotencyLedger,
+  BOUNDED_LEDGER_DEFAULTS,
+  BoundedIdempotencyLedger,
+  isConflictAwareLedger,
   MemoryIdempotencyLedger,
   FileIdempotencyLedger,
 } from "./idempotency-ledger";
@@ -90,6 +102,13 @@ export const HANDLER_ERROR_CODES = Object.freeze({
   UNKNOWN_EVENT_TYPE: "UNKNOWN_EVENT_TYPE",
   INVALID_OBJECT: "INVALID_OBJECT",
   ALREADY_HANDLED: "ALREADY_HANDLED",
+  /**
+   * The same event id was redelivered with a DIFFERENT payload (the
+   * sha256 of the raw body doesn't match the fingerprint recorded at
+   * dispatch). Possible forgery or split-brain retry — the handler
+   * refuses and flags it rather than swallowing it as a duplicate.
+   */
+  PAYLOAD_CONFLICT: "PAYLOAD_CONFLICT",
 });
 
 /**
@@ -168,24 +187,36 @@ function effect(
 /* ── Handler-level idempotency ledger ────────────────────────────── */
 
 /**
- * Event ids already dispatched to an effect (defense in depth:
- * parseTestWebhookEvent already rejects replays at the gate).
+ * Handler-level idempotency ledger. The default is a
+ * BoundedIdempotencyLedger: memory is capped (LRU eviction) and ids
+ * expire after BOUNDED_LEDGER_DEFAULTS.TTL_SECONDS, so a redelivery
+ * storm can't turn the dedupe set into a memory leak. Eviction only
+ * weakens dedupe — a very-late replay of an evicted id fails closed
+ * here and still has to get past signature/freshness verification.
  *
- * The default ledger is in-memory — drills and tests reset it freely.
+ * The default ledger also tracks one sha256 fingerprint of the raw
+ * event body per id (`ConflictAwareLedger`): a replay of a consumed
+ * id with a DIFFERENT payload throws PAYLOAD_CONFLICT instead of
+ * being swallowed as a benign duplicate.
+ *
  * A LIVE staging route must persist keys across restarts: swap in a
  * file-backed adapter (same interface) before handling traffic:
  *
  *   setHandlerLedger(new FileIdempotencyLedger("/var/lib/staging/webhook-ids.jsonl"));
  *
+ * (File ledger note: run `ledger.compact(n)` from a maintenance loop
+ * to keep the file itself bounded — a web route never compacts on the
+ * request path.)
+ *
  * The parse-level replay ledger (`seenEventIds` in webhook-test) has
  * the same constraint — swap it the same way when the route goes live.
  */
-let handlerLedger: IdempotencyLedger = new MemoryIdempotencyLedger();
+let handlerLedger: IdempotencyLedger = new BoundedIdempotencyLedger();
 
 /**
  * Swap the handler idempotency ledger. Pass a `FileIdempotencyLedger`
  * (or any `IdempotencyLedger`) for a live staging route; the drills
- * and tests keep the in-memory default.
+ * and tests keep the bounded in-memory default.
  */
 export function setHandlerLedger(ledger: IdempotencyLedger): void {
   if (!ledger || typeof ledger.has !== "function" || typeof ledger.add !== "function") {
@@ -197,12 +228,12 @@ export function setHandlerLedger(ledger: IdempotencyLedger): void {
   handlerLedger = ledger;
 }
 
-/** The currently installed handler ledger (drill default: in-memory). */
+/** The currently installed handler ledger (drill default: bounded in-memory). */
 export function getHandlerLedger(): IdempotencyLedger {
   return handlerLedger;
 }
 
-export { FileIdempotencyLedger };
+export { FileIdempotencyLedger, BoundedIdempotencyLedger, BOUNDED_LEDGER_DEFAULTS };
 
 /* ── Audit trail (append-only; never blocks fulfillment) ─────────── */
 
@@ -266,17 +297,56 @@ function audit(kind: AuditEventKind, fields: AuditFields = {}): void {
  * Persist the event id in the idempotency ledger AND note the
  * produced effect in the audit trail. The ledger keeps exactly-once;
  * the audit trail keeps the receipt of what exactly-once did.
+ *
+ * `payloadFingerprint` is sha256 of the raw signed body — it lets a
+ * later replay of the same id with different bytes surface as
+ * PAYLOAD_CONFLICT instead of a benign duplicate.
  */
 function commitEffect(
   event: TestWebhookEvent,
-  effectName: WebhookEffect["effect"]
+  effectName: WebhookEffect["effect"],
+  payloadFingerprint?: string
 ): void {
   handlerLedger.add(event.id);
+  if (payloadFingerprint !== undefined && isConflictAwareLedger(handlerLedger)) {
+    handlerLedger.recordFingerprint(event.id, payloadFingerprint);
+  }
   audit(AUDIT_EVENT_KINDS.EFFECT_PRODUCED, {
     eventId: event.id,
     eventType: event.type,
     effect: effectName,
   });
+}
+
+/**
+ * Compare a replayed event's payload fingerprint against the one
+ * recorded when the id first produced an effect. Returns
+ * ALREADY_HANDLED for an identical redelivery, PAYLOAD_CONFLICT when
+ * the bytes differ — a possible forgery or split-brain retry that
+ * must never be silently swallowed.
+ */
+function replayVerdict(
+  event: TestWebhookEvent,
+  payloadFingerprint: string | undefined
+): Error {
+  if (
+    payloadFingerprint !== undefined &&
+    isConflictAwareLedger(handlerLedger)
+  ) {
+    const recorded = handlerLedger.fingerprintFor(event.id);
+    if (recorded !== undefined && recorded !== payloadFingerprint) {
+      // No audit here: handleTestWebhookDelivery's catch records
+      // delivery.rejected with this code exactly once.
+      return handlerErr(
+        HANDLER_ERROR_CODES.PAYLOAD_CONFLICT,
+        `event ${event.id} replayed with a DIFFERENT payload — recorded fingerprint does not match; refusing.`
+      );
+    }
+  }
+  return handlerErr(
+    HANDLER_ERROR_CODES.ALREADY_HANDLED,
+    `event ${event.id} already produced an effect — refusing redispatch.`
+  );
 }
 
 /* ── Dispatch ────────────────────────────────────────────────────── */
@@ -289,9 +359,21 @@ function commitEffect(
  * unverified event is a test-mode violation in spirit — the caller
  * must have verified first.
  *
- * @throws ALREADY_HANDLED | UNKNOWN_EVENT_TYPE | INVALID_OBJECT
+ * @throws ALREADY_HANDLED | PAYLOAD_CONFLICT | UNKNOWN_EVENT_TYPE | INVALID_OBJECT
  */
-export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
+export function handleTestWebhookEvent(
+  event: TestWebhookEvent,
+  opts: {
+    /**
+     * sha256 of the raw signed webhook body. When provided (and the
+     * installed ledger tracks fingerprints), a replay of a consumed
+     * id with different bytes throws PAYLOAD_CONFLICT; an identical
+     * replay throws ALREADY_HANDLED. Omit it only for direct fixture
+     * calls — `handleTestWebhookDelivery` always supplies it.
+     */
+    payloadFingerprint?: string;
+  } = {}
+): WebhookEffect {
   if (!event || typeof event !== "object" || event.testMode !== true) {
     throw handlerErr(
       HANDLER_ERROR_CODES.INVALID_OBJECT,
@@ -299,10 +381,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
     );
   }
   if (handlerLedger.has(event.id)) {
-    throw handlerErr(
-      HANDLER_ERROR_CODES.ALREADY_HANDLED,
-      `event ${event.id} already produced an effect — refusing redispatch.`
-    );
+    throw replayVerdict(event, opts.payloadFingerprint);
   }
   const obj = event.data && event.data.object;
 
@@ -315,7 +394,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           `checkout.session.completed carried no valid receipt — never unlocking on a ${obj && typeof obj === "object" ? "non-receipt" : "missing"} payload.`
         );
       }
-      commitEffect(event, "unlock_deliverable");
+      commitEffect(event, "unlock_deliverable", opts.payloadFingerprint);
       return effect(event, "unlock_deliverable", obj);
     }
     case "payment_intent.succeeded": {
@@ -325,7 +404,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           "payment_intent.succeeded carried no valid receipt."
         );
       }
-      commitEffect(event, "record_payment");
+      commitEffect(event, "record_payment", opts.payloadFingerprint);
       return effect(event, "record_payment", obj);
     }
     case "customer.subscription.created": {
@@ -335,7 +414,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           "customer.subscription.created carried no valid active subscription."
         );
       }
-      commitEffect(event, "provision_subscription");
+      commitEffect(event, "provision_subscription", opts.payloadFingerprint);
       return effect(event, "provision_subscription", obj);
     }
     case "customer.subscription.updated": {
@@ -345,7 +424,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
           "customer.subscription.updated carried no valid active subscription."
         );
       }
-      commitEffect(event, "sync_subscription");
+      commitEffect(event, "sync_subscription", opts.payloadFingerprint);
       return effect(event, "sync_subscription", obj);
     }
     case "customer.subscription.canceled": {
@@ -359,7 +438,7 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
       const accessUntil = plan.keepAccessToPeriodEnd
         ? new Date(new Date(obj.startedAt).getTime() + MONTH_MILLIS).toISOString()
         : new Date().toISOString();
-      commitEffect(event, "grant_access_to_period_end");
+      commitEffect(event, "grant_access_to_period_end", opts.payloadFingerprint);
       return effect(event, "grant_access_to_period_end", obj, accessUntil);
     }
     default: {
@@ -380,7 +459,10 @@ export function handleTestWebhookEvent(event: TestWebhookEvent): WebhookEffect {
  *
  * Verification errors (BAD_SIGNATURE / EXPIRED_EVENT / REPLAYED_EVENT /
  * BAD_EVENT) throw before any handler runs; dispatch errors
- * (UNKNOWN_EVENT_TYPE / INVALID_OBJECT / ALREADY_HANDLED) throw after.
+ * (UNKNOWN_EVENT_TYPE / INVALID_OBJECT / ALREADY_HANDLED /
+ * PAYLOAD_CONFLICT) throw after. A replay of a consumed event id with
+ * a byte-different payload throws PAYLOAD_CONFLICT — the ledger
+ * remembers the sha256 of the raw body it first dispatched.
  */
 export function handleTestWebhookDelivery(
   rawBody: string,
@@ -406,12 +488,16 @@ export function handleTestWebhookDelivery(
     eventId: event.id,
     eventType: event.type,
   });
+  // Fingerprint the exact signed bytes: an identical redelivery
+  // (same id, same bytes) is an acknowledged duplicate; same id with
+  // different bytes is a conflict, never silently swallowed.
+  const payloadFingerprint = fixtureSha256(rawBody);
   try {
-    return handleTestWebhookEvent(event);
+    return handleTestWebhookEvent(event, { payloadFingerprint });
   } catch (e) {
     // Dispatch failed (UNKNOWN_EVENT_TYPE / INVALID_OBJECT /
-    // ALREADY_HANDLED): the rejection goes in the trail, then the
-    // error propagates to the route.
+    // ALREADY_HANDLED / PAYLOAD_CONFLICT): the rejection goes in the
+    // trail, then the error propagates to the route.
     audit(AUDIT_EVENT_KINDS.DELIVERY_REJECTED, {
       eventId: event.id,
       eventType: event.type,
