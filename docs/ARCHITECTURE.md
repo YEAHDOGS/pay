@@ -50,7 +50,7 @@ protocols plus a reference web client (this repo).
 
 ### Identity
 
-Handles like `brandon.pay` map to public keys. Resolver priority (user can
+Handles like `founder.pay` map to public keys. Resolver priority (user can
 reorder or disable any):
 
 1. **Local address book** — explicit mappings the user saved (always trusted).

@@ -33,7 +33,7 @@
 
 ## Top threats and mitigations
 
-- **Handle impersonation** (`brandon.pay` vs `brand0n.pay`): show resolver
+- **Handle impersonation** (`founder.pay` vs `f0under.pay`): show resolver
   source + trust level, safety-number verification for contacts, homoglyph
   warnings on lookalike handles.
 - **Malicious resolver**: resolvers are untrusted by default; local address

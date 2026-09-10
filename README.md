@@ -24,7 +24,7 @@ directly, where:
 
 1. **Wallet** — client-side, non-custodial. Keys never leave the device.
 2. **Identity** — a human-readable handle mapped to a public key (think
-   `brandon.pay` → `0x…`), resolved without a central registry.
+   `founder.pay` → `0x…`), resolved without a central registry.
 3. **Transport** — encrypted payment requests and invoices delivered over a
    decentralized transport (libp2p-style DHT or Nostr relays), with no single
    server that can censor or go down.
