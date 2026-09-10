@@ -63,6 +63,25 @@ export interface SubscriptionCancellation {
   readonly testMode: true;
 }
 
+/**
+ * Cancellation ledger: subscription id → the cancellation record the
+ * first cancel minted. Canceling twice is not a bug in a retrying
+ * client — it is a retried cancel, so the second call replays the
+ * original record instead of minting a second one with a different
+ * timestamp. Callers always receive a fresh copy; the stored record is
+ * frozen and can never be corrupted by a mutating caller.
+ */
+const cancellationLedger = new Map<string, SubscriptionCancellation>();
+
+/**
+ * Reset the cancellation ledger. For tests only — mirrors
+ * `resetCheckoutIdempotency()` / `resetRefundFixtures()` in
+ * checkout-test.ts.
+ */
+export function resetCancellationFixtures(): void {
+  cancellationLedger.clear();
+}
+
 /* ── Plan descriptors ────────────────────────────────────────────── */
 
 /**
@@ -137,6 +156,12 @@ export function nextRenewalDate(
 /**
  * Cancel a subscription at period end. Returns a pure fixture record;
  * access runs until `effectiveAt` when the plan allows it.
+ *
+ * Idempotent: a subscription cancels exactly once. A second call with
+ * the same subscription replays the original cancellation record —
+ * a retried cancel must not mint a second record with a different
+ * timestamp, or the ledger drifts on exactly the retries checkout
+ * clients are expected to do.
  */
 export function cancelSubscription(
   subscription: Subscription
@@ -148,18 +173,26 @@ export function cancelSubscription(
     err.code = ERROR_CODES.UNKNOWN_SESSION;
     throw err;
   }
+  const stored = cancellationLedger.get(subscription.id);
+  if (stored !== undefined) {
+    // Replay: hand out a copy so the caller's mutations can never
+    // corrupt the ledger's record of the cancel.
+    return { ...stored };
+  }
   const plan = describePlan(subscription.productId);
   const canceledAt = new Date().toISOString();
   const effectiveAt = plan.keepAccessToPeriodEnd
     ? nextRenewalDate(subscription, 1)
     : canceledAt;
-  return {
+  const cancellation = Object.freeze({
     subscriptionId: subscription.id,
     canceledAt,
     effectiveAt,
     status: "canceled",
     testMode: true,
-  };
+  }) as SubscriptionCancellation;
+  cancellationLedger.set(subscription.id, cancellation);
+  return { ...cancellation };
 }
 
 export { isValidTestSubscription };
