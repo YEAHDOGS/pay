@@ -7,7 +7,7 @@
  *
  * The shared checkout contract for YEAHDOGS products. It simulates the
  * hosted-checkout flow (create session → confirm with a test card →
- * receipt) so money milestones can be exercised end-to-end WITHOUT any
+ * receipt → optional full refund) so money milestones can be exercised end-to-end WITHOUT any
  * live processor account, secret key, or network call:
  *
  *   - divorce: the $30 one-time uncontested packet (`uncontested_packet`)
@@ -86,6 +86,13 @@ export const ERROR_CODES = Object.freeze({
   /** Idempotency key already recorded against a DIFFERENT session —
    *  not a retry, something is wrong; fail closed. */
   IDEMPOTENCY_KEY_CONFLICT: "IDEMPOTENCY_KEY_CONFLICT",
+  /** issueTestRefund called with something that is not a valid
+   *  succeeded one-time test receipt (forged, tampered, or a
+   *  subscription — subscriptions are not refundable fixtures). */
+  INVALID_RECEIPT: "INVALID_RECEIPT",
+  /** Receipt already fully refunded — no second refund will ever be
+   *  minted for it; retries must replay via the idempotency key. */
+  ALREADY_REFUNDED: "ALREADY_REFUNDED",
 });
 
 /* ── Test-mode guard ─────────────────────────────────────────────── */
@@ -215,10 +222,133 @@ function lookupIdempotency<T>(
   return seen.result;
 }
 
-/** Reset both confirm idempotency ledgers. For tests only. */
+/** Reset confirm AND refund idempotency ledgers. For tests only. */
 export function resetCheckoutIdempotency(): void {
   paymentIdempotency.clear();
   subscriptionIdempotency.clear();
+  refundIdempotency.clear();
+}
+
+/* ── Refunds (full refunds of one-time payments) ─────────────────── */
+
+let refundCounter = 0;
+
+export interface Refund {
+  id: string;
+  receiptId: string;
+  productId: string;
+  /** Full refunds only: always the receipt's settled amount. */
+  amountCents: number;
+  currency: string;
+  status: "succeeded";
+  refundedAt: string;
+  testMode: true;
+}
+
+/**
+ * Receipts already fully refunded. A receipt can never be refunded
+ * twice — money-back-once is the trust boundary that keeps a client
+ * bug or replay from double-spending the merchant's ledger.
+ */
+const refundedReceiptIds = new Set<string>();
+
+/**
+ * Refund idempotency ledger: key → the receipt it named + the refund
+ * that issue produced. Same retry semantics as the confirm ledgers:
+ * same key + same receipt replays the original refund; same key on a
+ * DIFFERENT receipt throws IDEMPOTENCY_KEY_CONFLICT (fail closed);
+ * ALREADY_REFUNDED without a recorded key is a hard stop — there is
+ * no "new attempt" path for a refund that already exists.
+ */
+const refundIdempotency = new Map<string, IdempotencyRecord<Refund>>();
+
+/**
+ * Simulate a full refund of a succeeded one-time test payment.
+ *
+ * Guards:
+ *   - receipt must pass `isValidTestReceipt` — forged, tampered, or
+ *     live-looking receipts throw INVALID_RECEIPT. Subscriptions are
+ *     not refundable fixtures; they fail this check too.
+ *   - a receipt refunds exactly once — a second issue throws
+ *     ALREADY_REFUNDED (double refunds are the classic merchant
+ *     money leak; fail closed instead of minting another).
+ *   - idempotency: same key + same receipt replays the original
+ *     refund instead of minting a second; cross-receipt key reuse
+ *     throws IDEMPOTENCY_KEY_CONFLICT.
+ *
+ * @throws {Error} code INVALID_RECEIPT | ALREADY_REFUNDED |
+ *         INVALID_IDEMPOTENCY_KEY | IDEMPOTENCY_KEY_CONFLICT |
+ *         TEST_MODE_VIOLATION
+ */
+export function issueTestRefund(
+  receipt: Receipt,
+  options: Record<string, unknown> = {}
+): Refund {
+  assertTestMode(options);
+  if (!isValidTestReceipt(receipt)) {
+    throw errWithCode(
+      ERROR_CODES.INVALID_RECEIPT,
+      "cannot refund: not a valid succeeded one-time test receipt — " +
+        "refunds only settle real fixture payments, never forged or live-looking objects."
+    );
+  }
+  const idempotencyKey = assertIdempotencyKey(options);
+  if (idempotencyKey !== undefined) {
+    // A retried issue with the same key+receipt replays the original
+    // refund — never a second one against the merchant.
+    const replay = lookupIdempotency(refundIdempotency, idempotencyKey, receipt.id);
+    if (replay) return replay;
+  }
+  if (refundedReceiptIds.has(receipt.id)) {
+    throw errWithCode(
+      ERROR_CODES.ALREADY_REFUNDED,
+      `receipt ${receipt.id} is already fully refunded — refusing a second refund.`
+    );
+  }
+  refundCounter += 1;
+  const refund: Refund = {
+    id: `rfnd_test_${String(refundCounter).padStart(6, "0")}`,
+    receiptId: receipt.id,
+    productId: receipt.productId,
+    amountCents: receipt.amountCents,
+    currency: receipt.currency,
+    status: "succeeded",
+    refundedAt: new Date().toISOString(),
+    testMode: true,
+  };
+  refundedReceiptIds.add(receipt.id);
+  if (idempotencyKey !== undefined) {
+    refundIdempotency.set(idempotencyKey, { sessionId: receipt.id, result: refund });
+  }
+  return refund;
+}
+
+/**
+ * Validate a refund fixture: succeeded, test-mode, `rfnd_test_`
+ * prefix, and a full refund of its catalog product's price.
+ */
+export function isValidTestRefund(refund: unknown): boolean {
+  const r = refund as Partial<Refund> | null;
+  if (!r || typeof r !== "object") return false;
+  const product = PRODUCTS[r.productId ?? ""];
+  return (
+    r.testMode === true &&
+    r.status === "succeeded" &&
+    typeof r.id === "string" &&
+    r.id.startsWith("rfnd_test_") &&
+    typeof r.receiptId === "string" &&
+    r.receiptId.startsWith("rcpt_test_") &&
+    !!product &&
+    r.amountCents === product.amountCents
+  );
+}
+
+/**
+ * Reset refund fixtures (issued-receipt set). For tests only —
+ * idempotency is reset via `resetCheckoutIdempotency()`.
+ */
+export function resetRefundFixtures(): void {
+  refundedReceiptIds.clear();
 }
 
 /* ── Checkout sessions ───────────────────────────────────────────── */
