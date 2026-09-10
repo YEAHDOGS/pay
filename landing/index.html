@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pay — Decentralized P2P payments</title>
+  <meta name="description" content="Pay is a decentralized peer-to-peer payments platform from DOGS — instant transfers with no bank, no processor, and no central switch, inspired by the new P2P payment rails in India. Work in progress — more information estimated by 2027.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#faf9f5">
+  <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://pay.wearedogs.net/">
+  <meta property="og:site_name" content="Pay">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Pay — Decentralized P2P payments">
+  <meta property="og:description" content="Pay is a decentralized peer-to-peer payments platform from DOGS — instant transfers with no bank, no processor, and no central switch, inspired by the new P2P payment rails in India. Work in progress — more information estimated by 2027.">
+  <meta property="og:url" content="https://pay.wearedogs.net/">
+  <meta property="og:image" content="https://pay.wearedogs.net/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Pay — Decentralized P2P payments — work in progress, more information by 2027">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <a class="skip" href="#content">Skip to content</a>
+  <header class="site">
+    <div class="nav">
+      <div class="brand">
+        <a class="wordmark" href="https://wearedogs.net">
+          <img src="./dogs-logo.svg" alt="DOGS logo: a black-and-white Labrador with its tongue out" width="34" height="34" decoding="async">
+          <span>DOGS</span>
+        </a>
+        <span class="sep" aria-hidden="true">/</span>
+        <a class="project" href="./">Pay</a>
+      </div>
+      <nav aria-label="Primary">
+        <a href="./privacy.html">Privacy</a>
+        <a href="https://github.com/YEAHDOGS/pay">GitHub</a>
+      </nav>
+    </div>
+  </header>
+  <main id="content">
+    <nav class="dots" aria-label="Sections">
+      <a href="#top" class="active"><span>Top</span></a>
+      <a href="#roadmap"><span>Roadmap</span></a>
+      <a href="#building"><span>What we're building</span></a>
+      <a href="#notify"><span>Get notified</span></a>
+    </nav>
+
+    <section class="panel" id="top" aria-label="Pay">
+      <div class="wrap">
+        <p class="eyebrow">DOGS &middot; Decentralized P2P payments</p>
+        <h1>Send it. Settle it. No middleman.</h1>
+        <p class="lede">Send money person to person — instant, direct, and free of middlemen.</p>
+        <p class="badge"><span class="pip" aria-hidden="true"></span> Work in progress &mdash; more information estimated by 2027</p>
+        <p><a class="scroll-hint" href="#roadmap">See where we are</a></p>
+      </div>
+    </section>
+
+    <section class="panel alt" id="roadmap" aria-labelledby="roadmap-h">
+      <div class="wrap">
+        <p class="eyebrow">Roadmap</p>
+        <h2 id="roadmap-h">The road to 2027</h2>
+        <p class="lede" style="margin-bottom:0">Where Pay is on its way to a proper launch.</p>
+        <ol class="timeline">
+          <li class="done"><span class="dot" aria-hidden="true"></span><strong>Idea</strong><span class="when">2025 &mdash; done</span></li>
+          <li class="done"><span class="dot" aria-hidden="true"></span><strong>Repo live</strong><span class="when">2026 &mdash; done</span></li>
+          <li class="now"><span class="dot" aria-hidden="true"></span><strong>Building</strong><span class="when">Now &mdash; in progress</span></li>
+          <li class="future"><span class="dot" aria-hidden="true"></span><strong>More information</strong><span class="when">Estimated 2027</span></li>
+        </ol>
+      </div>
+    </section>
+
+    <section class="panel" id="building" aria-labelledby="building-h">
+      <div class="wrap">
+        <p class="eyebrow">The plan</p>
+        <h2 id="building-h">What we're building</h2>
+        
+        <div class="grid">
+          <div class="card">
+            <span class="tick" aria-hidden="true"></span>
+            <h3>Instant, person to person</h3>
+            <p>Transfers settle in seconds, phone to phone. The new P2P rails in India move billions a day this way — Pay brings that speed without the central operator.</p>
+          </div>
+          <div class="card">
+            <span class="tick" aria-hidden="true"></span>
+            <h3>Decentralized by design</h3>
+            <p>No bank in the middle, no processor taking a cut, no single switch that can go down or say no.</p>
+          </div>
+          <div class="card">
+            <span class="tick" aria-hidden="true"></span>
+            <h3>Pay by handle or QR</h3>
+            <p>Simple handles and QR codes instead of account numbers. Point, scan, paid.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel dark notify" id="notify" aria-labelledby="notify-h">
+      <div class="wrap">
+        <p class="eyebrow">Stay in the loop</p>
+        <h2 id="notify-h">Get notified</h2>
+        <p class="lede">Want to know when Pay wakes up from its nap? Leave your email.</p>
+        <form data-notify novalidate>
+          <div class="fields">
+            <div>
+              <label for="email">Email address</label>
+              <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" aria-describedby="email-error">
+            </div>
+            <button type="submit"><span class="spinner" aria-hidden="true"></span><span>Notify me</span></button>
+          </div>
+          <p class="field-error" id="email-error" aria-live="polite"></p>
+        </form>
+        <div class="foot">
+          <p class="madeby">
+            <img src="./dogs-logo.svg" alt="DOGS logo: a black-and-white Labrador with its tongue out" width="24" height="24" loading="lazy" decoding="async">
+            This product was made by <a href="https://wearedogs.net">DOGS</a>
+          </p>
+          <nav aria-label="Footer">
+            <a href="./">Home</a>
+            <a href="./privacy.html">Privacy</a>
+            <a href="https://github.com/YEAHDOGS/pay">GitHub</a>
+          </nav>
+          <p>&copy; 2026 DOGS &middot; Pay is a work in progress &middot; more by 2027.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="./app.js" defer></script>
+</body>
+</html>
