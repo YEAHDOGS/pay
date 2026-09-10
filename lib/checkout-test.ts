@@ -81,6 +81,11 @@ export const ERROR_CODES = Object.freeze({
   INVALID_AMOUNT: "INVALID_AMOUNT",
   UNKNOWN_SESSION: "UNKNOWN_SESSION",
   DECLINED: "DECLINED",
+  /** Idempotency key malformed (empty, non-string, too long). */
+  INVALID_IDEMPOTENCY_KEY: "INVALID_IDEMPOTENCY_KEY",
+  /** Idempotency key already recorded against a DIFFERENT session —
+   *  not a retry, something is wrong; fail closed. */
+  IDEMPOTENCY_KEY_CONFLICT: "IDEMPOTENCY_KEY_CONFLICT",
 });
 
 /* ── Test-mode guard ─────────────────────────────────────────────── */
@@ -115,6 +120,105 @@ export function getProduct(productId: string): Product {
     throw err;
   }
   return p;
+}
+
+/* ── Confirm-side idempotency keys ──────────────────────────────── */
+
+/**
+ * Maximum idempotency key length. Keys are opaque client-generated
+ * tokens (a UUID is typical); bounding them keeps the ledger a map of
+ * small strings, not a memory sink for attacker-sized input.
+ */
+export const MAX_IDEMPOTENCY_KEY_LENGTH = 128 as const;
+
+/** What a recorded idempotency key is bound to: the session it named
+ *  and the receipt that charge produced. */
+interface IdempotencyRecord<T> {
+  readonly sessionId: string;
+  readonly result: T;
+}
+
+/**
+ * Idempotency ledgers for the confirm step: key → the session + the
+ * charge it produced. A double-submitted confirm with the same key
+ * must never mint a second receipt — it replays the first. A key
+ * reused for a DIFFERENT session throws IDEMPOTENCY_KEY_CONFLICT
+ * instead of being honored: reusing a key across charges is not a
+ * retry, it's a bug (or an attack).
+ *
+ * Failed attempts (declines) never write the ledger: a retry after a
+ * decline with the same key is a NEW attempt, exactly like a live
+ * processor treats it.
+ *
+ * NOTE: module-level and in-memory, like the counters. Fixtures are
+ * single-process; `resetCheckoutIdempotency()` clears both ledgers
+ * for tests.
+ */
+const paymentIdempotency = new Map<string, IdempotencyRecord<Receipt>>();
+const subscriptionIdempotency = new Map<
+  string,
+  IdempotencyRecord<Subscription>
+>();
+
+function errWithCode(code: string, message: string): Error & { code: string } {
+  const e = new Error(`checkout-test: ${message}`) as Error & {
+    code: string;
+  };
+  e.code = code;
+  return e;
+}
+
+/**
+ * Validate `options.idempotencyKey`. Returns the key when the caller
+ * opted in, undefined when absent.
+ *
+ * @throws INVALID_IDEMPOTENCY_KEY for empty/non-string/oversized keys.
+ */
+export function assertIdempotencyKey(
+  options: Record<string, unknown> = {}
+): string | undefined {
+  const key = options.idempotencyKey;
+  if (key === undefined) return undefined;
+  if (
+    typeof key !== "string" ||
+    key.length === 0 ||
+    key.length > MAX_IDEMPOTENCY_KEY_LENGTH
+  ) {
+    throw errWithCode(
+      ERROR_CODES.INVALID_IDEMPOTENCY_KEY,
+      "idempotencyKey must be a non-empty string of at most " +
+        `${MAX_IDEMPOTENCY_KEY_LENGTH} characters.`
+    );
+  }
+  return key;
+}
+
+/**
+ * Look up an idempotency key on a confirm ledger. Same key + same
+ * session → the original result (a retry, replay it). Same key +
+ * DIFFERENT session → IDEMPOTENCY_KEY_CONFLICT (fail closed).
+ */
+function lookupIdempotency<T>(
+  ledger: Map<string, IdempotencyRecord<T>>,
+  key: string,
+  sessionId: string
+): T | undefined {
+  const seen = ledger.get(key);
+  if (!seen) return undefined;
+  if (seen.sessionId !== sessionId) {
+    throw errWithCode(
+      ERROR_CODES.IDEMPOTENCY_KEY_CONFLICT,
+      `idempotency key "${key}" was recorded for session ${seen.sessionId}, ` +
+        `not ${sessionId} — refusing to replay a charge for a different session.`
+    );
+  }
+  return seen.result;
+}
+
+/** Reset both confirm idempotency ledgers. For tests only. */
+export function resetCheckoutIdempotency(): void {
+  paymentIdempotency.clear();
+  subscriptionIdempotency.clear();
 }
 
 /* ── Checkout sessions ───────────────────────────────────────────── */
@@ -182,7 +286,16 @@ export interface Receipt {
 /**
  * Simulate paying a one-time checkout session with the test card.
  * Test-card convention: last4 `0002` is always declined.
- * @throws {Error} code UNKNOWN_SESSION | DECLINED | TEST_MODE_VIOLATION
+ *
+ * Idempotency: pass `options.idempotencyKey` and a double-submitted
+ * confirm returns the ORIGINAL receipt instead of charging twice;
+ * the key is bound to its first session and reuse across sessions
+ * throws IDEMPOTENCY_KEY_CONFLICT. Declines never record the key, so
+ * retrying after a decline re-attempts the charge.
+ *
+ * @throws {Error} code UNKNOWN_SESSION | DECLINED |
+ *         INVALID_IDEMPOTENCY_KEY | IDEMPOTENCY_KEY_CONFLICT |
+ *         TEST_MODE_VIOLATION
  */
 export function confirmTestPayment(
   sessionId: string,
@@ -198,6 +311,13 @@ export function confirmTestPayment(
     err.code = ERROR_CODES.UNKNOWN_SESSION;
     throw err;
   }
+  const idempotencyKey = assertIdempotencyKey(options);
+  if (idempotencyKey !== undefined) {
+    // A retry with the same key+session replays the original receipt —
+    // no second charge, no counter bump.
+    const replay = lookupIdempotency(paymentIdempotency, idempotencyKey, sessionId);
+    if (replay) return replay;
+  }
   if (session.billing !== "one_time") {
     const err = new Error(
       `checkout-test: ${session.productId} is a recurring product — use confirmTestSubscription.`
@@ -206,6 +326,8 @@ export function confirmTestPayment(
     throw err;
   }
   if (card && card.last4 === "0002") {
+    // Declines never record the key: retrying after a decline with
+    // the same key is a fresh attempt, not a replay.
     const err = new Error("checkout-test: card declined (test decline card).") as Error & {
       code: string;
     };
@@ -213,7 +335,7 @@ export function confirmTestPayment(
     throw err;
   }
   receiptCounter += 1;
-  return {
+  const receipt: Receipt = {
     id: `rcpt_test_${String(receiptCounter).padStart(6, "0")}`,
     checkoutSessionId: sessionId,
     productId: session.productId,
@@ -224,6 +346,10 @@ export function confirmTestPayment(
     paidAt: new Date().toISOString(),
     testMode: true,
   };
+  if (idempotencyKey !== undefined) {
+    paymentIdempotency.set(idempotencyKey, { sessionId, result: receipt });
+  }
+  return receipt;
 }
 
 /**
