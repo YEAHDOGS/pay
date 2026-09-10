@@ -388,7 +388,16 @@ export interface Subscription {
 
 /**
  * Simulate subscribing a recurring checkout session with the test card.
- * @throws {Error} code UNKNOWN_SESSION | DECLINED | TEST_MODE_VIOLATION
+ *
+ * Idempotency: pass `options.idempotencyKey` and a double-submitted
+ * subscribe returns the ORIGINAL subscription instead of provisioning
+ * twice; the key is bound to its first session and reuse across
+ * sessions throws IDEMPOTENCY_KEY_CONFLICT. Declines never record the
+ * key, so retrying after a decline re-attempts the subscribe.
+ *
+ * @throws {Error} code UNKNOWN_SESSION | DECLINED |
+ *         INVALID_IDEMPOTENCY_KEY | IDEMPOTENCY_KEY_CONFLICT |
+ *         TEST_MODE_VIOLATION
  */
 export function confirmTestSubscription(
   sessionId: string,
@@ -404,6 +413,17 @@ export function confirmTestSubscription(
     err.code = ERROR_CODES.UNKNOWN_SESSION;
     throw err;
   }
+  const idempotencyKey = assertIdempotencyKey(options);
+  if (idempotencyKey !== undefined) {
+    // A retry with the same key+session replays the original
+    // subscription — no double-provisioning, no counter bump.
+    const replay = lookupIdempotency(
+      subscriptionIdempotency,
+      idempotencyKey,
+      sessionId
+    );
+    if (replay) return replay;
+  }
   if (session.billing !== "recurring") {
     const err = new Error(
       `checkout-test: ${session.productId} is a one-time product — use confirmTestPayment.`
@@ -412,6 +432,8 @@ export function confirmTestSubscription(
     throw err;
   }
   if (card && card.last4 === "0002") {
+    // Declines never record the key: retrying after a decline with
+    // the same key is a fresh attempt, not a replay.
     const err = new Error("checkout-test: card declined (test decline card).") as Error & {
       code: string;
     };
@@ -419,7 +441,7 @@ export function confirmTestSubscription(
     throw err;
   }
   subscriptionCounter += 1;
-  return {
+  const subscription: Subscription = {
     id: `sub_test_${String(subscriptionCounter).padStart(6, "0")}`,
     checkoutSessionId: sessionId,
     productId: session.productId,
@@ -431,6 +453,13 @@ export function confirmTestSubscription(
     startedAt: new Date().toISOString(),
     testMode: true,
   };
+  if (idempotencyKey !== undefined) {
+    subscriptionIdempotency.set(idempotencyKey, {
+      sessionId,
+      result: subscription,
+    });
+  }
+  return subscription;
 }
 
 /**
