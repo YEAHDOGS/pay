@@ -3,132 +3,223 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Pay — Decentralized P2P payments</title>
-  <meta name="description" content="Pay is a decentralized peer-to-peer payments platform from DOGS — instant transfers with no bank, no processor, and no central switch, inspired by the new P2P payment rails in India. Work in progress — more information estimated by 2027.">
+  <title>Pay — peer-to-peer money, no middleman</title>
+  <meta name="description" content="Pay is a DOGS plan for money that moves person to person: no bank, no processor, no account that can be frozen. Pre-alpha.">
   <meta name="robots" content="index, follow">
-  <meta name="theme-color" content="#faf9f5">
+  <meta name="theme-color" content="#11140f">
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./dogs-cropped-small.webp">
   <link rel="canonical" href="https://pay.wearedogs.net/">
   <meta property="og:site_name" content="Pay">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="Pay — Decentralized P2P payments">
-  <meta property="og:description" content="Pay is a decentralized peer-to-peer payments platform from DOGS — instant transfers with no bank, no processor, and no central switch, inspired by the new P2P payment rails in India. Work in progress — more information estimated by 2027.">
+  <meta property="og:title" content="Pay — peer-to-peer money, no middleman">
+  <meta property="og:description" content="A DOGS plan for money that moves person to person. No bank, no processor, no account that can be frozen. Pre-alpha.">
   <meta property="og:url" content="https://pay.wearedogs.net/">
   <meta property="og:image" content="https://pay.wearedogs.net/og.png">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
-  <meta property="og:image:alt" content="Pay — Decentralized P2P payments — work in progress, more information by 2027">
+  <meta property="og:image:alt" content="Pay — decentralized peer-to-peer payments from DOGS, pre-alpha">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./v2.css">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    "name": "Pay",
+    "url": "https://pay.wearedogs.net/",
+    "description": "A DOGS plan for decentralized peer-to-peer payments. Pre-alpha.",
+    "sameAs": ["https://github.com/YEAHDOGS/pay", "https://wearedogs.net"]
+  }
+  </script>
 </head>
 <body>
   <a class="skip" href="#content">Skip to content</a>
-  <header class="site">
+
+  <header class="top">
     <div class="nav">
-      <div class="brand">
-        <a class="wordmark" href="https://wearedogs.net">
-          <img src="./dogs-logo.svg" alt="DOGS logo: a black-and-white Labrador with its tongue out" width="34" height="34" decoding="async">
-          <span>DOGS</span>
-        </a>
-        <span class="sep" aria-hidden="true">/</span>
-        <a class="project" href="./">Pay</a>
-      </div>
-      <nav aria-label="Primary">
-        <a href="./privacy.html">Privacy</a>
+      <a class="brand" href="./">
+        <img src="./dogs-logo.svg" alt="" width="32" height="32" aria-hidden="true">
+        <b>DOGS</b><span class="sep" aria-hidden="true">/</span><span class="proj">Pay</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#plan">The plan</a>
+        <a href="#versus">Why</a>
+        <a href="#faq">FAQ</a>
         <a href="https://github.com/YEAHDOGS/pay">GitHub</a>
       </nav>
+      <a class="btn small" href="#notify">Notify me</a>
     </div>
   </header>
-  <main id="content">
-    <nav class="dots" aria-label="Sections">
-      <a href="#top" class="active"><span>Top</span></a>
-      <a href="#roadmap"><span>Roadmap</span></a>
-      <a href="#building"><span>What we're building</span></a>
-      <a href="#notify"><span>Get notified</span></a>
-    </nav>
 
-    <section class="panel" id="top" aria-label="Pay">
+  <main id="content">
+    <!-- HERO -->
+    <section class="hero" aria-label="Pay">
       <div class="wrap">
-        <p class="eyebrow">DOGS &middot; Decentralized P2P payments</p>
-        <h1>Send it. Settle it. No middleman.</h1>
-        <p class="lede">Send money person to person — instant, direct, and free of middlemen.</p>
-        <p class="badge"><span class="pip" aria-hidden="true"></span> Work in progress &mdash; more information estimated by 2027</p>
-        <p><a class="scroll-hint" href="#roadmap">See where we are</a></p>
+        <p class="eyebrow rv">DOGS &middot; peer-to-peer payments</p>
+        <h1 class="rv d1">Money that moves <span class="g">person to person.</span></h1>
+        <p class="lede rv d2">No bank. No processor. No account that can be frozen.</p>
+        <div class="hero-ctas rv d3">
+          <a class="btn" href="#notify">Notify me</a>
+          <a class="btn ghost" href="https://github.com/YEAHDOGS/pay">Read the plan</a>
+        </div>
+        <p class="rv d3"><span class="status"><span class="pip" aria-hidden="true"></span> PRE-ALPHA &middot; VISION, NOT A PRODUCT YET</span></p>
+
+        <div class="demo rv d3" aria-label="Concept animation of a peer-to-peer transfer">
+          <span class="tag">Concept &mdash; not live</span>
+          <div class="rails">
+            <div class="node">
+              <span class="face" aria-hidden="true">Y</span>
+              <span class="who">you</span>
+              <span class="amt">$25.00</span>
+            </div>
+            <div class="track" aria-hidden="true"><span class="coin"></span></div>
+            <div class="node">
+              <span class="face" aria-hidden="true">T</span>
+              <span class="who">them.pay</span>
+              <span class="amt">$0.00</span>
+            </div>
+          </div>
+          <div class="receipt" aria-live="polite">
+            <div class="row"><span>handle &rarr; key</span><span class="ok">resolved</span></div>
+            <div class="row"><span>message</span><span class="ok">encrypted end to end</span></div>
+            <div class="row"><span>settlement</span><span class="ok">direct, no middleman</span></div>
+          </div>
+          <div class="demo-actions">
+            <button type="button" class="btn small" id="simulate">Simulate a send</button>
+            <p class="demo-note">How the send flow is meant to feel.</p>
+          </div>
+        </div>
       </div>
     </section>
 
-    <section class="panel alt" id="roadmap" aria-labelledby="roadmap-h">
+    <!-- THE PLAN -->
+    <section class="block" id="plan" aria-labelledby="plan-h">
       <div class="wrap">
-        <p class="eyebrow">Roadmap</p>
-        <h2 id="roadmap-h">The road to 2027</h2>
-        <p class="lede" style="margin-bottom:0">Where Pay is on its way to a proper launch.</p>
-        <ol class="timeline">
-          <li class="done"><span class="dot" aria-hidden="true"></span><strong>Idea</strong><span class="when">2025 &mdash; done</span></li>
-          <li class="done"><span class="dot" aria-hidden="true"></span><strong>Repo live</strong><span class="when">2026 &mdash; done</span></li>
-          <li class="now"><span class="dot" aria-hidden="true"></span><strong>Building</strong><span class="when">Now &mdash; in progress</span></li>
-          <li class="future"><span class="dot" aria-hidden="true"></span><strong>More information</strong><span class="when">Estimated 2027</span></li>
+        <p class="eyebrow rv">The plan</p>
+        <h2 class="sec rv d1" id="plan-h">Four parts. None of them is a bank.</h2>
+        <p class="sec-sub rv d2">Pay is a client, not a company holding your money. The architecture is written down in the open, before the code.</p>
+        <ol class="ledger">
+          <li class="rv"><span class="n">01</span><div>
+            <h3>Keys live on your device</h3>
+            <p>The wallet is non-custodial. <b>Keys are generated on your phone and never leave it.</b> If we wanted your money, we could not take it.</p>
+          </div></li>
+          <li class="rv d1"><span class="n">02</span><div>
+            <h3>Handles, not account numbers</h3>
+            <p>A name like <b>you.pay</b> resolves to a public key, no central registry. The send screen shows who resolved it and how much to trust that.</p>
+          </div></li>
+          <li class="rv d2"><span class="n">03</span><div>
+            <h3>Messages are encrypted</h3>
+            <p>Requests and receipts travel as <b>end-to-end encrypted messages.</b> Relays see ciphertext and routing data, nothing more.</p>
+          </div></li>
+          <li class="rv d3"><span class="n">04</span><div>
+            <h3>Settlement is pluggable</h3>
+            <p>The rail underneath can change, Lightning, stablecoin, whatever is fastest and cheapest. <b>The send flow stays the same.</b></p>
+          </div></li>
         </ol>
       </div>
     </section>
 
-    <section class="panel" id="building" aria-labelledby="building-h">
+    <!-- VERSUS -->
+    <section class="block" id="versus" aria-labelledby="versus-h" style="padding-top:0">
       <div class="wrap">
-        <p class="eyebrow">The plan</p>
-        <h2 id="building-h">What we're building</h2>
-        
-        <div class="grid">
-          <div class="card">
-            <span class="tick" aria-hidden="true"></span>
-            <h3>Instant, person to person</h3>
-            <p>Transfers settle in seconds, phone to phone. The new P2P rails in India move billions a day this way — Pay brings that speed without the central operator.</p>
+        <p class="eyebrow rv">Why</p>
+        <h2 class="sec rv d1" id="versus-h">Their ledger, or no ledger at all.</h2>
+        <div class="vs">
+          <div class="vs-card bad rv d1">
+            <span class="k">The old way</span>
+            <ul>
+              <li>Your money sits in their account.</li>
+              <li>They see every transaction you make.</li>
+              <li>They can freeze you out, any time, no appeal.</li>
+            </ul>
           </div>
-          <div class="card">
-            <span class="tick" aria-hidden="true"></span>
-            <h3>Decentralized by design</h3>
-            <p>No bank in the middle, no processor taking a cut, no single switch that can go down or say no.</p>
-          </div>
-          <div class="card">
-            <span class="tick" aria-hidden="true"></span>
-            <h3>Pay by handle or QR</h3>
-            <p>Simple handles and QR codes instead of account numbers. Point, scan, paid.</p>
+          <div class="vs-card good rv d2">
+            <span class="k">The plan</span>
+            <ul>
+              <li>Value settles directly between two people.</li>
+              <li>No central transaction database exists.</li>
+              <li>There is no account to freeze, because there is no account.</li>
+            </ul>
+            <p class="fine">Handles and rails are the hard parts. We are working on them in the open.</p>
           </div>
         </div>
       </div>
     </section>
 
-    <section class="panel dark notify" id="notify" aria-labelledby="notify-h">
+    <!-- FAQ -->
+    <section class="block" id="faq" aria-labelledby="faq-h" style="padding-top:0">
       <div class="wrap">
-        <p class="eyebrow">Stay in the loop</p>
-        <h2 id="notify-h">Get notified</h2>
-        <p class="lede">Want to know when Pay wakes up from its nap? Leave your email.</p>
-        <form data-notify novalidate>
-          <div class="fields">
-            <div>
-              <label for="email">Email address</label>
-              <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" aria-describedby="email-error">
-            </div>
-            <button type="submit"><span class="spinner" aria-hidden="true"></span><span>Notify me</span></button>
-          </div>
-          <p class="field-error" id="email-error" aria-live="polite"></p>
-        </form>
-        <div class="foot">
-          <p class="madeby">
-            <img src="./dogs-logo.svg" alt="DOGS logo: a black-and-white Labrador with its tongue out" width="24" height="24" loading="lazy" decoding="async">
-            This product was made by <a href="https://wearedogs.net">DOGS</a>
-          </p>
-          <nav aria-label="Footer">
-            <a href="./">Home</a>
-            <a href="./privacy.html">Privacy</a>
-            <a href="https://github.com/YEAHDOGS/pay">GitHub</a>
-          </nav>
-          <p>&copy; 2026 DOGS &middot; Pay is a work in progress &middot; more by 2027.</p>
+        <p class="eyebrow rv">FAQ</p>
+        <h2 class="sec rv d1" id="faq-h">Straight answers.</h2>
+        <div class="faq rv d2">
+          <details>
+            <summary>Is Pay live?</summary>
+            <p>No. Pay is pre-alpha, currently Phase 0: vision, architecture, and security model documented, with a scaffold to build on. Nothing moves real money yet.</p>
+          </details>
+          <details>
+            <summary>What will the first version do?</summary>
+            <p>v0.1 is scoped to one thing: two people complete a real peer-to-peer payment, sent to a handle, settled on one rail. Wallet, identity, and encrypted transport come first.</p>
+          </details>
+          <details>
+            <summary>Which settlement rail?</summary>
+            <p>Undecided. Lightning and a stablecoin L2 are the candidates; the trade-off gets documented in the open before the adapter ships.</p>
+          </details>
+          <details>
+            <summary>How do handles work without a central registry?</summary>
+            <p>A handle maps to a public key through pluggable resolvers, your own address book first, then decentralized name systems. The client always shows which resolver answered and its trust level, because impersonation is the top risk.</p>
+          </details>
+          <details>
+            <summary>Do you hold my money? Is there KYC?</summary>
+            <p>No custody, ever. There is no Pay balance and no account to verify; compliance for fiat on-ramps sits with optional partners, outside this project.</p>
+          </details>
         </div>
       </div>
     </section>
+
+    <!-- NOTIFY -->
+    <section class="notify" id="notify" aria-labelledby="notify-h">
+      <div class="wrap">
+        <p class="eyebrow rv">Stay in the loop</p>
+        <h2 class="sec rv d1" id="notify-h">Hear it when the first rail ships.</h2>
+        <p class="sec-sub rv d2">One email, when v0.1 can move real money. Nothing else.</p>
+        <form data-notify novalidate class="rv d3">
+          <div class="f-row">
+            <div class="grow">
+              <label class="n" for="email">Email address</label>
+              <input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" aria-describedby="email-error">
+            </div>
+            <button type="submit" class="btn"><span class="spinner" aria-hidden="true"></span><span>Notify me</span></button>
+          </div>
+          <p class="f-err" id="email-error" aria-live="polite"></p>
+        </form>
+        <p class="honest">This form is a placeholder: nothing is transmitted or stored. The repo is the news feed until then.</p>
+
+        <footer>
+          <div class="foot-inner">
+            <p class="madeby">
+              <img src="./dogs-logo.svg" alt="" width="24" height="24" aria-hidden="true">
+              This product was made by <a href="https://wearedogs.net">DOGS</a>
+            </p>
+            <nav class="foot-nav" aria-label="Footer">
+              <a href="./">Home</a>
+              <a href="./privacy.html">Privacy</a>
+              <a href="./terms.html">Terms</a>
+              <a href="https://github.com/YEAHDOGS/pay">GitHub</a>
+            </nav>
+            <p class="copy">&copy; 2026 DOGS &middot; Pay is pre-alpha</p>
+          </div>
+        </footer>
+      </div>
+    </section>
   </main>
-  <script src="./app.js" defer></script>
+
+  <div class="sticky-cta" id="stickyCta">
+    <a class="btn" href="#notify">Notify me</a>
+  </div>
+
+  <script src="./v2.js" defer></script>
 </body>
 </html>
