@@ -4,16 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pay — peer-to-peer money, no middleman</title>
-  <meta name="description" content="Pay is a DOGS plan for money that moves person to person: no bank, no processor, no account that can be frozen. Pre-alpha.">
+  <meta name="description" content="Pay is a DOGS plan for money that moves person to person: no bank, no processor, no account that can be frozen. Pre-alpha — vision, not a product yet.">
   <meta name="robots" content="index, follow">
-  <meta name="theme-color" content="#11140f">
+  <meta name="theme-color" content="#0a0d0b">
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./dogs-cropped-small.webp">
   <link rel="canonical" href="https://pay.wearedogs.net/">
   <meta property="og:site_name" content="Pay">
   <meta property="og:type" content="website">
   <meta property="og:title" content="Pay — peer-to-peer money, no middleman">
-  <meta property="og:description" content="A DOGS plan for money that moves person to person. No bank, no processor, no account that can be frozen. Pre-alpha.">
+  <meta property="og:description" content="Money that moves person to person. No bank. No processor. Nothing to freeze. Pre-alpha.">
   <meta property="og:url" content="https://pay.wearedogs.net/">
   <meta property="og:image" content="https://pay.wearedogs.net/og.png">
   <meta property="og:image:width" content="1200">
@@ -22,8 +22,8 @@
   <meta name="twitter:card" content="summary_large_image">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&family=Lora:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./v2.css">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./pay.css">
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
@@ -36,155 +36,115 @@
   </script>
 </head>
 <body>
-  <a class="skip" href="#content">Skip to content</a>
+  <a class="skip" href="#hero">Skip to content</a>
 
-  <header class="top">
-    <div class="nav">
-      <a class="brand" href="./">
-        <img src="./dogs-logo.svg" alt="" width="32" height="32" aria-hidden="true">
-        <b>DOGS</b><span class="sep" aria-hidden="true">/</span><span class="proj">Pay</span>
-      </a>
-      <nav class="nav-links" aria-label="Primary">
-        <a href="#plan">The plan</a>
-        <a href="#versus">Why</a>
-        <a href="#faq">FAQ</a>
-        <a href="https://github.com/YEAHDOGS/pay">GitHub</a>
-      </nav>
-      <a class="btn small" href="#notify">Notify me</a>
-    </div>
+  <header class="topbar">
+    <a class="brand" href="./">
+      <img src="./dogs-logo.svg" alt="" width="28" height="28" aria-hidden="true">
+      <span><b>DOGS</b><span class="sep" aria-hidden="true">/</span><span class="proj">Pay</span></span>
+    </a>
+    <a class="top-cta" href="#notify">Notify me</a>
   </header>
 
   <main id="content">
-    <!-- HERO -->
-    <section class="hero" aria-label="Pay">
-      <div class="wrap">
-        <p class="eyebrow rv">DOGS &middot; peer-to-peer payments</p>
-        <h1 class="rv d1">Money that moves <span class="g">person to person.</span></h1>
-        <p class="lede rv d2">No bank. No processor. No account that can be frozen.</p>
-        <div class="hero-ctas rv d3">
+
+    <!-- 1 · HERO -->
+    <section class="panel" id="hero" aria-labelledby="hero-h">
+      <div class="bg" aria-hidden="true">
+        <img src="./pay-hero.webp" alt="" fetchpriority="high">
+        <span class="scrim scrim-bottom"></span>
+      </div>
+      <div class="inner place-bottom-left">
+        <p class="tag rv">DOGS &middot; peer-to-peer payments</p>
+        <h1 class="giant rv d1" id="hero-h">PAY</h1>
+        <p class="line rv d2">Money that moves person to person.</p>
+        <p class="line dim rv d2">No bank. No processor. Nothing to freeze.</p>
+        <div class="ctas rv d3">
           <a class="btn" href="#notify">Notify me</a>
           <a class="btn ghost" href="https://github.com/YEAHDOGS/pay">Read the plan</a>
         </div>
-        <p class="rv d3"><span class="status"><span class="pip" aria-hidden="true"></span> PRE-ALPHA &middot; VISION, NOT A PRODUCT YET</span></p>
+        <p class="status rv d3"><span class="pip" aria-hidden="true"></span> PRE-ALPHA &middot; VISION, NOT A PRODUCT</p>
+      </div>
+      <a class="scroll-hint" href="#keys" aria-label="Scroll to the next panel">&darr;</a>
+    </section>
 
-        <div class="demo rv d3" aria-label="Concept animation of a peer-to-peer transfer">
-          <span class="tag">Concept &mdash; not live</span>
-          <div class="rails">
-            <div class="node">
-              <span class="face" aria-hidden="true">Y</span>
-              <span class="who">you</span>
-              <span class="amt">$25.00</span>
-            </div>
-            <div class="track" aria-hidden="true"><span class="coin"></span></div>
-            <div class="node">
-              <span class="face" aria-hidden="true">T</span>
-              <span class="who">them.pay</span>
-              <span class="amt">$0.00</span>
-            </div>
-          </div>
-          <div class="receipt" aria-live="polite">
-            <div class="row"><span>handle &rarr; key</span><span class="ok">resolved</span></div>
-            <div class="row"><span>message</span><span class="ok">encrypted end to end</span></div>
-            <div class="row"><span>settlement</span><span class="ok">direct, no middleman</span></div>
-          </div>
-          <div class="demo-actions">
-            <button type="button" class="btn small" id="simulate">Simulate a send</button>
-            <p class="demo-note">How the send flow is meant to feel.</p>
-          </div>
+    <!-- 2 · KEYS -->
+    <section class="panel" id="keys" aria-labelledby="keys-h">
+      <div class="bg" aria-hidden="true">
+        <img src="./pay-keys.webp" alt="">
+        <span class="scrim scrim-right"></span>
+      </div>
+      <div class="inner place-mid-right">
+        <h2 class="giant rv" id="keys-h">KEYS</h2>
+        <p class="line rv d1">Your keys never leave your phone.</p>
+        <p class="line dim rv d2">Non-custodial by design. Untakeable.</p>
+      </div>
+    </section>
+
+    <!-- 3 · HANDLES -->
+    <section class="panel" id="handles" aria-labelledby="handles-h">
+      <div class="bg" aria-hidden="true">
+        <img src="./pay-network.webp" alt="" style="object-position: 20% 50%">
+        <span class="scrim scrim-top"></span>
+      </div>
+      <div class="inner place-top-left">
+        <h2 class="giant rv" id="handles-h">HANDLES</h2>
+        <p class="line rv d1">Send to a name, not sixteen digits.</p>
+        <p class="line dim rv d2">you.pay resolves to a public key. No central registry.</p>
+      </div>
+    </section>
+
+    <!-- 4 · ENCRYPTED -->
+    <section class="panel" id="encrypted" aria-labelledby="enc-h">
+      <div class="bg" aria-hidden="true">
+        <img src="./pay-network.webp" alt="" style="object-position: 80% 40%">
+        <span class="scrim scrim-bottom"></span>
+      </div>
+      <div class="inner place-bottom-right">
+        <h2 class="giant rv" id="enc-h">ENCRYPTED</h2>
+        <p class="line rv d1">Messages move as ciphertext.</p>
+        <p class="line dim rv d2">Relays see routing. Nothing else.</p>
+      </div>
+    </section>
+
+    <!-- 5 · RAILS -->
+    <section class="panel" id="rails" aria-labelledby="rails-h">
+      <div class="bg" aria-hidden="true">
+        <img src="./pay-rails.webp" alt="">
+        <span class="scrim scrim-left"></span>
+      </div>
+      <div class="inner place-mid-left">
+        <h2 class="giant rv" id="rails-h">RAILS</h2>
+        <p class="line rv d1">One send flow. Any rail underneath.</p>
+        <p class="line dim rv d2">Lightning, stablecoin L2. The UI never changes.</p>
+      </div>
+    </section>
+
+    <!-- 6 · LEDGER -->
+    <section class="panel ledger" id="versus" aria-labelledby="versus-h">
+      <div class="inner place-mid-center">
+        <h2 class="giant split rv" id="versus-h"><span class="their">THEIR<br>LEDGER</span><span class="ours">NO<br>LEDGER</span></h2>
+        <div class="vs rv d1">
+          <ul class="old">
+            <li>Your money sits in their account.</li>
+            <li>They see every transaction.</li>
+            <li>They can freeze you out.</li>
+          </ul>
+          <ul class="new">
+            <li>Value settles person to person.</li>
+            <li>No central transaction database.</li>
+            <li>No account to freeze.</li>
+          </ul>
         </div>
       </div>
     </section>
 
-    <!-- THE PLAN -->
-    <section class="block" id="plan" aria-labelledby="plan-h">
-      <div class="wrap">
-        <p class="eyebrow rv">The plan</p>
-        <h2 class="sec rv d1" id="plan-h">Four parts. None of them is a bank.</h2>
-        <p class="sec-sub rv d2">Pay is a client, not a company holding your money. The architecture is written down in the open, before the code.</p>
-        <ol class="ledger">
-          <li class="rv"><span class="n">01</span><div>
-            <h3>Keys live on your device</h3>
-            <p>The wallet is non-custodial. <b>Keys are generated on your phone and never leave it.</b> If we wanted your money, we could not take it.</p>
-          </div></li>
-          <li class="rv d1"><span class="n">02</span><div>
-            <h3>Handles, not account numbers</h3>
-            <p>A name like <b>you.pay</b> resolves to a public key, no central registry. The send screen shows who resolved it and how much to trust that.</p>
-          </div></li>
-          <li class="rv d2"><span class="n">03</span><div>
-            <h3>Messages are encrypted</h3>
-            <p>Requests and receipts travel as <b>end-to-end encrypted messages.</b> Relays see ciphertext and routing data, nothing more.</p>
-          </div></li>
-          <li class="rv d3"><span class="n">04</span><div>
-            <h3>Settlement is pluggable</h3>
-            <p>The rail underneath can change, Lightning, stablecoin, whatever is fastest and cheapest. <b>The send flow stays the same.</b></p>
-          </div></li>
-        </ol>
-      </div>
-    </section>
-
-    <!-- VERSUS -->
-    <section class="block" id="versus" aria-labelledby="versus-h" style="padding-top:0">
-      <div class="wrap">
-        <p class="eyebrow rv">Why</p>
-        <h2 class="sec rv d1" id="versus-h">Their ledger, or no ledger at all.</h2>
-        <div class="vs">
-          <div class="vs-card bad rv d1">
-            <span class="k">The old way</span>
-            <ul>
-              <li>Your money sits in their account.</li>
-              <li>They see every transaction you make.</li>
-              <li>They can freeze you out, any time, no appeal.</li>
-            </ul>
-          </div>
-          <div class="vs-card good rv d2">
-            <span class="k">The plan</span>
-            <ul>
-              <li>Value settles directly between two people.</li>
-              <li>No central transaction database exists.</li>
-              <li>There is no account to freeze, because there is no account.</li>
-            </ul>
-            <p class="fine">Handles and rails are the hard parts. We are working on them in the open.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- FAQ -->
-    <section class="block" id="faq" aria-labelledby="faq-h" style="padding-top:0">
-      <div class="wrap">
-        <p class="eyebrow rv">FAQ</p>
-        <h2 class="sec rv d1" id="faq-h">Straight answers.</h2>
-        <div class="faq rv d2">
-          <details>
-            <summary>Is Pay live?</summary>
-            <p>No. Pay is pre-alpha, currently Phase 0: vision, architecture, and security model documented, with a scaffold to build on. Nothing moves real money yet.</p>
-          </details>
-          <details>
-            <summary>What will the first version do?</summary>
-            <p>v0.1 is scoped to one thing: two people complete a real peer-to-peer payment, sent to a handle, settled on one rail. Wallet, identity, and encrypted transport come first.</p>
-          </details>
-          <details>
-            <summary>Which settlement rail?</summary>
-            <p>Undecided. Lightning and a stablecoin L2 are the candidates; the trade-off gets documented in the open before the adapter ships.</p>
-          </details>
-          <details>
-            <summary>How do handles work without a central registry?</summary>
-            <p>A handle maps to a public key through pluggable resolvers, your own address book first, then decentralized name systems. The client always shows which resolver answered and its trust level, because impersonation is the top risk.</p>
-          </details>
-          <details>
-            <summary>Do you hold my money? Is there KYC?</summary>
-            <p>No custody, ever. There is no Pay balance and no account to verify; compliance for fiat on-ramps sits with optional partners, outside this project.</p>
-          </details>
-        </div>
-      </div>
-    </section>
-
-    <!-- NOTIFY -->
-    <section class="notify" id="notify" aria-labelledby="notify-h">
-      <div class="wrap">
-        <p class="eyebrow rv">Stay in the loop</p>
-        <h2 class="sec rv d1" id="notify-h">Hear it when the first rail ships.</h2>
-        <p class="sec-sub rv d2">One email, when v0.1 can move real money. Nothing else.</p>
+    <!-- 7 · FIRST / NOTIFY -->
+    <section class="panel notify" id="notify" aria-labelledby="notify-h">
+      <div class="inner place-mid-center narrow">
+        <h2 class="giant rv" id="notify-h">FIRST</h2>
+        <p class="line rv d1">Hear it when the first rail ships.</p>
+        <p class="line dim rv d2">One email. When v0.1 moves real money.</p>
         <form data-notify novalidate class="rv d3">
           <div class="f-row">
             <div class="grow">
@@ -195,31 +155,25 @@
           </div>
           <p class="f-err" id="email-error" aria-live="polite"></p>
         </form>
-        <p class="honest">This form is a placeholder: nothing is transmitted or stored. The repo is the news feed until then.</p>
+        <p class="honest rv d3">Honest: this form is a placeholder — nothing is transmitted or stored. The repo is the news feed until then.</p>
 
-        <footer>
-          <div class="foot-inner">
-            <p class="madeby">
-              <img src="./dogs-logo.svg" alt="" width="24" height="24" aria-hidden="true">
-              This product was made by <a href="https://wearedogs.net">DOGS</a>
-            </p>
-            <nav class="foot-nav" aria-label="Footer">
-              <a href="./">Home</a>
-              <a href="./privacy.html">Privacy</a>
-              <a href="./terms.html">Terms</a>
-              <a href="https://github.com/YEAHDOGS/pay">GitHub</a>
-            </nav>
-            <p class="copy">&copy; 2026 DOGS &middot; Pay is pre-alpha</p>
-          </div>
+        <footer class="foot rv d3">
+          <a class="madeby" href="https://wearedogs.net" aria-label="This product was made by DOGS">
+            <img src="./made-by-dogs.png" alt="This product was made by DOGS" width="220" height="73">
+          </a>
+          <nav class="foot-nav" aria-label="Footer">
+            <a href="./">Home</a>
+            <a href="./privacy.html">Privacy</a>
+            <a href="./terms.html">Terms</a>
+            <a href="https://github.com/YEAHDOGS/pay">GitHub</a>
+          </nav>
+          <p class="copy">&copy; 2026 DOGS &middot; Pay is pre-alpha</p>
         </footer>
       </div>
     </section>
+
   </main>
 
-  <div class="sticky-cta" id="stickyCta">
-    <a class="btn" href="#notify">Notify me</a>
-  </div>
-
-  <script src="./v2.js" defer></script>
+  <script src="./pay.js" defer></script>
 </body>
 </html>
